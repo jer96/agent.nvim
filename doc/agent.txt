@@ -1,0 +1,53 @@
+*agent.txt*    A Neovim plugin for [brief description]
+
+==============================================================================
+CONTENTS                                                         *agent-contents*
+
+    1. Introduction ........................... |agent-introduction|
+    2. Requirements ........................... |agent-requirements|
+    3. Setup ................................. |agent-setup|
+    4. Commands .............................. |agent-commands|
+    5. Configuration ......................... |agent-configuration|
+
+==============================================================================
+1. INTRODUCTION                                              *agent-introduction*
+
+agent.nvim is a Neovim plugin that [brief description]
+
+==============================================================================
+2. REQUIREMENTS                                              *agent-requirements*
+
+- Neovim >= 0.8.0
+
+==============================================================================
+3. SETUP                                                          *agent-setup*
+
+Install using your favorite package manager.
+
+Using lazy.nvim: >
+    {
+        dir = "~/nvim-plugins/agent.nvim",
+        opts = {
+            -- Default values shown
+            greeting = "Hello from agent.nvim!",
+            enable_logging = false,
+        },
+    }
+<
+
+==============================================================================
+4. COMMANDS                                                    *agent-commands*
+
+:AgentGreet                                                        *:AgentGreet*
+    Display a greeting message in a floating window.
+
+==============================================================================
+5. CONFIGURATION                                          *agent-configuration*
+
+Configuration can be provided when calling setup: >
+    require("agent").setup({
+        -- Default values shown
+        greeting = "Hello from agent.nvim!",
+        enable_logging = false,
+    })
+<

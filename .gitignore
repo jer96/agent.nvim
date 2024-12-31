@@ -1,0 +1,10 @@
+.DS_Store
+*.swp
+*.swo
+/doc/tags
+__pycache__/
+.env
+.venv/
+venv/
+ENV/
+*.egg-info/
