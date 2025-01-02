@@ -2,17 +2,6 @@ local M = {}
 
 M.config = {
   python_host = vim.fn.stdpath("data") .. "/site/pack/plugins/start/agent.nvim/rplugin/python",
-  models = {
-    default = "claude-3-5-sonnet-20241022",
-    available = {
-      "claude-3-5-sonnet-20241022",
-      "gpt-4",
-    },
-  },
-  api_keys = {
-    openai = vim.env.OPENAI_API_KEY,
-    anthropic = vim.env.ANTHROPIC_API_KEY,
-  },
 }
 
 local utils = require("agent.utils")
@@ -25,7 +14,7 @@ function M.setup(opts)
   vim.g.agent_config = M.config
 
   -- Create commands
-  require("agent.commands").setup()
+  -- require("agent.commands").setup()
 
   -- Check python host
   if vim.fn.has("python3") ~= 1 then
@@ -38,10 +27,6 @@ function M.setup(opts)
   if not vim.fn.isdirectory(python_host) then
     utils.log("Creating Python host directory", vim.log.levels.INFO)
     vim.fn.mkdir(python_host, "p")
-  end
-
-  if M.config.enable_logging then
-    utils.log("agent.nvim initialized successfully!")
   end
 end
 

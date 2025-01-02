@@ -1,105 +1,40 @@
 -- lua/agent/ui.lua
 local api = vim.api
 local M = {}
-
-function M.show_greeting()
-  -- Display greeting in a floating window
-  local lines = vim.split("hello", "\n")
-  local width = 0
-  for _, line in ipairs(lines) do
-    width = math.max(width, #line)
-  end
-
-  local height = #lines
-  local buf = vim.api.nvim_create_buf(false, true)
-
-  -- Set buffer lines
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-
-  -- Calculate window position
-  local win_opts = {
-    relative = "editor",
-    width = width + 4,
-    height = height,
-    row = math.floor((vim.o.lines - height) / 2),
-    col = math.floor((vim.o.columns - (width + 4)) / 2),
-    style = "minimal",
-    border = "rounded",
-  }
-
-  -- Create and show the floating window
-  local win = vim.api.nvim_open_win(buf, true, win_opts)
-
-  -- Auto-close window after 2 seconds
-  vim.defer_fn(function()
-    if vim.api.nvim_win_is_valid(win) then
-      vim.api.nvim_win_close(win, true)
-    end
-  end, 2000)
-end
+local state = {
+  messages = {},
+}
 
 -- Store chat window and buffer IDs
 M.chat_win = nil
 M.chat_buf = nil
 M.input_buf = nil
 M.input_win = nil
-M.messages = {}
 
-function M.create_chat_window()
-  -- Create main chat buffer
-  M.chat_buf = api.nvim_create_buf(false, true)
-  api.nvim_buf_set_option(M.chat_buf, "buftype", "nofile")
-  api.nvim_buf_set_option(M.chat_buf, "modifiable", false)
-  api.nvim_buf_set_name(M.chat_buf, "Agent Chat")
+local show_chat_windows = function()
+  -- Create input window as horizontal split
+  vim.cmd("split")
+  vim.cmd("resize 5")
+  M.input_win = api.nvim_get_current_win()
+  api.nvim_win_set_buf(M.input_win, M.input_buf)
 
-  -- Calculate window dimensions
-  local width = math.floor(vim.o.columns * 0.8)
-  local height = math.floor(vim.o.lines * 0.8)
-  local row = math.floor((vim.o.lines - height) / 2)
-  local col = math.floor((vim.o.columns - width) / 2)
-
-  -- Create main chat window
-  local win_opts = {
-    relative = "editor",
-    width = width,
-    height = height - 3, -- Leave space for input
-    row = row,
-    col = col,
-    style = "minimal",
-    border = "rounded",
-    title = " Agent Chat ",
-    title_pos = "center",
+  -- Set window options
+  local win_config = {
+    number = false,
+    relativenumber = false,
+    wrap = true,
+    signcolumn = "no",
   }
-  M.chat_win = api.nvim_open_win(M.chat_buf, true, win_opts)
 
-  -- Create input buffer
-  M.input_buf = api.nvim_create_buf(false, true)
-  api.nvim_buf_set_option(M.input_buf, "buftype", "nofile")
-  api.nvim_buf_set_option(M.input_buf, "modifiable", true)
+  for _, win in ipairs({ M.chat_win, M.input_win }) do
+    for option, value in pairs(win_config) do
+      api.nvim_win_set_option(win, option, value)
+    end
+  end
 
-  -- Create input window
-  local input_opts = {
-    relative = "editor",
-    width = width,
-    height = 3,
-    row = row + height - 3,
-    col = col,
-    style = "minimal",
-    border = "rounded",
-    title = " Message ",
-    title_pos = "center",
-  }
-  M.input_win = api.nvim_open_win(M.input_buf, false, input_opts)
-
-  -- Set up keymaps for input buffer
-  local opts = { noremap = true, silent = true }
-  api.nvim_buf_set_keymap(M.input_buf, "n", "<CR>", ':lua require("agent.ui").send_message()<CR>', opts)
-  api.nvim_buf_set_keymap(M.input_buf, "i", "<C-CR>", '<Esc>:lua require("agent.ui").send_message()<CR>', opts)
-  api.nvim_buf_set_keymap(M.input_buf, "n", "q", ':lua require("agent.ui").close_chat()<CR>', opts)
-
-  -- Set up autocmd for window close
-  api.nvim_create_autocmd("WinClosed", {
-    pattern = tostring(M.chat_win),
+  -- Set up autocmd for buffer wipeout
+  api.nvim_create_autocmd("BufWipeout", {
+    buffer = M.chat_buf,
     callback = function()
       M.close_chat()
     end,
@@ -110,18 +45,71 @@ function M.create_chat_window()
   api.nvim_command("startinsert")
 end
 
-function M.add_message(role, content)
-  table.insert(M.messages, { role = role, content = content })
-  M.update_chat_display()
+function M.show_chat()
+  -- If windows exist and are valid, focus them
+  if M.chat_win and api.nvim_win_is_valid(M.chat_win) then
+    api.nvim_set_current_win(M.chat_win)
+    return
+  end
+
+  -- If buffers exist but windows don't, just create new windows
+  if M.chat_buf and api.nvim_buf_is_valid(M.chat_buf) and M.input_buf and api.nvim_buf_is_valid(M.input_buf) then
+    show_chat_windows()
+    return
+  end
+
+  -- If nothing exists, create everything new
+  M.create_chat_window()
 end
 
-function M.update_chat_display()
+function M.create_chat_window()
+  -- Create main chat buffer
+  M.chat_buf = api.nvim_create_buf(false, true)
+  api.nvim_buf_set_option(M.chat_buf, "buftype", "nofile")
+  api.nvim_buf_set_option(M.chat_buf, "modifiable", false)
+  pcall(api.nvim_buf_set_name, M.chat_buf, "Agent Chat")
+
+  -- Create the vertical split for chat
+  vim.cmd("vsplit")
+  vim.cmd("vertical resize 50")
+  M.chat_win = api.nvim_get_current_win()
+  api.nvim_win_set_buf(M.chat_win, M.chat_buf)
+
+  -- Create input buffer
+  M.input_buf = api.nvim_create_buf(false, true)
+  api.nvim_buf_set_option(M.input_buf, "buftype", "nofile")
+  api.nvim_buf_set_option(M.input_buf, "modifiable", true)
+
+  show_chat_windows()
+
+  -- Set up keymaps for input buffer
+  local opts = { noremap = true, silent = true }
+  api.nvim_buf_set_keymap(M.input_buf, "n", "<CR>", ':lua require("agent.ui").send_message()<CR>', opts)
+  api.nvim_buf_set_keymap(M.input_buf, "i", "<C-s>", '<Esc>:lua require("agent.ui").send_message()<CR>', opts)
+  api.nvim_buf_set_keymap(M.input_buf, "n", "q", ':lua require("agent.ui").close_chat()<CR>', opts)
+  api.nvim_buf_set_keymap(M.chat_buf, "n", "q", ':lua require("agent.ui").close_chat()<CR>', opts)
+end
+
+function M.close_chat()
+  if M.input_win and api.nvim_win_is_valid(M.input_win) then
+    api.nvim_win_close(M.input_win, true)
+  end
+  if M.chat_win and api.nvim_win_is_valid(M.chat_win) then
+    api.nvim_win_close(M.chat_win, true)
+  end
+  M.chat_win = nil
+  M.chat_buf = nil
+  M.input_win = nil
+  M.input_buf = nil
+end
+
+local update_chat_display = function()
   if not M.chat_buf or not api.nvim_buf_is_valid(M.chat_buf) then
     return
   end
 
   local display_lines = {}
-  for _, msg in ipairs(M.messages) do
+  for _, msg in ipairs(state.messages) do
     local prefix = msg.role == "user" and "You: " or "Agent: "
     local wrapped_content = vim.split(msg.content, "\n")
     table.insert(display_lines, prefix .. wrapped_content[1])
@@ -139,6 +127,18 @@ function M.update_chat_display()
   api.nvim_win_set_cursor(M.chat_win, { #display_lines, 0 })
 end
 
+local add_message = function(role, content)
+  vim.g.agent_state = state
+  table.insert(state.messages, { role = role, content = content })
+  update_chat_display()
+
+  print("Current Messages:")
+  for i, msg in ipairs(state.messages) do
+    print(string.format("[%d] role: %s, content: %s", i, msg.role, msg.content))
+  end
+  print("-------------------")
+end
+
 function M.send_message()
   if not M.input_buf or not api.nvim_buf_is_valid(M.input_buf) then
     return
@@ -152,39 +152,18 @@ function M.send_message()
     api.nvim_buf_set_lines(M.input_buf, 0, -1, false, { "" })
 
     -- Add user message to chat
-    M.add_message("user", message)
+    add_message("user", message)
 
     -- Get response from LLM
     local response = vim.fn.AgentTest(message)
     if response ~= "" then
-      M.add_message("assistant", response)
+      add_message("assistant", response)
     end
   end
 
   -- Reset cursor and keep insert mode
   api.nvim_win_set_cursor(M.input_win, { 1, 0 })
   api.nvim_command("startinsert")
-end
-
-function M.close_chat()
-  if M.input_win and api.nvim_win_is_valid(M.input_win) then
-    api.nvim_win_close(M.input_win, true)
-  end
-  if M.chat_win and api.nvim_win_is_valid(M.chat_win) then
-    api.nvim_win_close(M.chat_win, true)
-  end
-  M.chat_win = nil
-  M.chat_buf = nil
-  M.input_win = nil
-  M.input_buf = nil
-end
-
-function M.show_chat()
-  if M.chat_win and api.nvim_win_is_valid(M.chat_win) then
-    api.nvim_set_current_win(M.chat_win)
-    return
-  end
-  M.create_chat_window()
 end
 
 return M
