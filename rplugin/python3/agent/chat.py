@@ -136,7 +136,11 @@ class ChatInterface:
         return message.strip()
 
     def _reset_cursor(self):
-        # Reset cursor and keep insert mode
+        # render markdown in chat window
+        self.nvim.current.window = self.chat_win
+        self.nvim.command("RenderMarkdown")
+        self.nvim.current.window = self.input_win
+        # reset cursor and keep insert mode
         self.input_win.cursor = (1, 0)
         self.nvim.command("startinsert")
 
