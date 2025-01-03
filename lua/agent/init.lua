@@ -1,10 +1,8 @@
 local M = {}
 
-M.config = {
-  python_host = vim.fn.stdpath("data") .. "/site/pack/plugins/start/agent.nvim/rplugin/python",
-}
-
 local utils = require("agent.utils")
+
+M.config = {}
 
 function M.setup(opts)
   -- Merge user config with defaults
@@ -13,20 +11,10 @@ function M.setup(opts)
   -- Set global config for python host
   vim.g.agent_config = M.config
 
-  -- Create commands
-  -- require("agent.commands").setup()
-
   -- Check python host
   if vim.fn.has("python3") ~= 1 then
     utils.log("Error: Python 3 support required", vim.log.levels.ERROR)
     return
-  end
-
-  -- Initialize python host
-  local python_host = M.config.python_host
-  if not vim.fn.isdirectory(python_host) then
-    utils.log("Creating Python host directory", vim.log.levels.INFO)
-    vim.fn.mkdir(python_host, "p")
   end
 end
 
