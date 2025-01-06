@@ -15,44 +15,48 @@ class ChatInterface:
         self.input_buf = None
         self.llm_provider = LLMProvider(nvim)
 
+    def create_chat_panel(self):
+        self._create_chat_buffers()
+        self._create_chat_windows()
+        self._show_chat_windows()
+
     def _set_chat_buf_keymaps(self):
         opts = {"noremap": True, "silent": True}
         self.nvim.api.buf_set_keymap(self.input_buf, "n", "<CR>", ":lua vim.fn.AgentSendStream()<CR>", opts)
         self.nvim.api.buf_set_keymap(self.input_buf, "i", "<C-s>", "<Esc>:lua vim.fn.AgentSendStream()<CR>", opts)
         self.nvim.api.buf_set_keymap(self.input_buf, "n", "ss", "<Esc>:lua vim.fn.AgentSend()<CR>", opts)
         self.nvim.api.buf_set_keymap(self.input_buf, "n", "q", ":lua vim.fn.AgentClose()<CR>", opts)
+        self.nvim.api.buf_set_keymap(self.input_buf, "n", "<C-x>", ":lua vim.fn.AgentClean()<CR>", opts)
         self.nvim.api.buf_set_keymap(self.chat_buf, "n", "q", ":lua vim.fn.AgentClose()<CR>", opts)
+        self.nvim.api.buf_set_keymap(self.chat_buf, "n", "<C-x>", ":lua vim.fn.AgentClean()<CR>", opts)
 
-    def create_chat_window(self):
-        # Create main chat buffer
-        self.chat_buf = self.nvim.request("nvim_create_buf", False, True)
+    def _create_chat_buffers(self):
+        self.chat_buf = self.nvim.api.create_buf(False, True)
         self.chat_buf.name = "agent chat"
         self.chat_buf.options["buftype"] = "nofile"
         self.chat_buf.options["modifiable"] = False
         self.chat_buf.options["filetype"] = "markdown"
 
+        self.input_buf = self.nvim.api.create_buf(False, True)
+        self.input_buf.options["buftype"] = "nofile"
+        self.input_buf.options["modifiable"] = True
+        self.input_buf.name = " "
+        self._set_chat_buf_keymaps()
+
+    def _create_chat_windows(self):
         # Create the vertical split for chat
         self.nvim.command("vsplit")
         self.nvim.command("vertical resize 65")
         self.chat_win = self.nvim.current.window
         self.nvim.current.buffer = self.chat_buf
 
-        # Create input buffer
-        self.input_buf = self.nvim.request("nvim_create_buf", False, True)
-        self.input_buf.options["buftype"] = "nofile"
-        self.input_buf.options["modifiable"] = True
-        self.input_buf.name = " "
-
-        self._show_chat_windows()
-        self._set_chat_buf_keymaps()
-
-    def _show_chat_windows(self):
         # Create input window as horizontal split
         self.nvim.command("split")
         self.nvim.command("resize 5")
         self.input_win = self.nvim.current.window
         self.nvim.current.buffer = self.input_buf
 
+    def _show_chat_windows(self):
         # Set window options
         win_config = {
             "number": False,
@@ -70,29 +74,44 @@ class ChatInterface:
         self.nvim.command("startinsert")
 
     def show_chat(self):
-        # If windows exist and are valid, focus them
-        if self.chat_win and self.chat_win.valid:
-            self.nvim.current.window = self.chat_win
-            return
-
-        # If buffers exist but windows don't, just create new windows
-        if self.chat_buf and self.chat_buf.valid and self.input_buf and self.input_buf.valid:
+        # if windows are valid, reset view
+        chat_win_valid = self.chat_win and self.chat_win.valid
+        input_win_valid = self.input_win and self.input_win.valid
+        if chat_win_valid and input_win_valid:
             self._show_chat_windows()
             return
 
-        # If nothing exists, create everything new
-        self.create_chat_window()
+        # if buffers are valid, create and show windows
+        chat_buf_valid = self.chat_buf and self.chat_buf.valid
+        input_buf_valid = self.input_buf and self.input_buf.valid
+        if chat_buf_valid and input_buf_valid:
+            self._create_chat_windows()
+            self._show_chat_windows()
+            return
+
+        # else create everything new
+        self.create_chat_panel()
 
     def close_chat(self):
         if self.input_win and self.input_win.valid:
             self.nvim.api.win_close(self.input_win, True)
         if self.chat_win and self.chat_win.valid:
             self.nvim.api.win_close(self.chat_win, True)
-
         self.chat_win = None
-        self.chat_buf = None
         self.input_win = None
+
+    def _delete_chat_buffers(self):
+        if self.chat_buf and self.chat_buf.valid:
+            self.nvim.api.buf_delete(self.chat_buf, {"force": True})
+        if self.input_buf and self.input_buf.valid:
+            self.nvim.api.buf_delete(self.input_buf, {"force": True})
+        self.chat_buf = None
         self.input_buf = None
+
+    def clean_chat(self):
+        self.close_chat()
+        self._delete_chat_buffers()
+        self.messages = []
 
     def _update_chat_display(self):
         if not self.chat_buf or not self.chat_buf.valid:
@@ -163,17 +182,15 @@ class ChatInterface:
     def send_message_stream(self):
         message = self._get_input_buf_contents()
         if message:
-
-            def stream_callback(chunk: str) -> None:
+            self.input_buf[:] = [""]
+            self._add_message("user", message)
+            event_stream = self.llm_provider.anthropic_complete_stream(self.messages)
+            for event in event_stream:
                 if self.messages[-1].get("role", "") == "user":
                     self.messages.append({"role": "assistant", "content": ""})
 
                 prev_message = self.messages[-1]
-                prev_message["content"] = prev_message["content"] + chunk
+                prev_message["content"] = prev_message["content"] + event
                 self._update_chat_display()
-
-            self.input_buf[:] = [""]
-            self._add_message("user", message)
-            self.llm_provider.anthropic_complete_stream(self.messages, stream_callback)
 
         self._reset_cursor()

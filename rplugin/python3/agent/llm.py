@@ -1,5 +1,5 @@
 import os
-from typing import Callable, Dict, List, Optional
+from typing import Dict, Generator, List, Optional
 
 import pynvim
 from anthropic import Anthropic
@@ -42,9 +42,8 @@ class LLMProvider:
     def anthropic_complete_stream(
         self,
         messages: List[Dict],
-        callback: Callable[[str], None],
         model: Optional[str] = CLAUDE_SONNET,
-    ) -> str:
+    ) -> Generator[str, None, None]:
         """Get streaming completion from Anthropic"""
         if not self.anthropic_key:
             raise ValueError("Anthropic API key not configured")
@@ -58,10 +57,6 @@ class LLMProvider:
             stream=True,
         )
 
-        full_text = ""
         for chunk in response:
             if chunk.type == "content_block_delta" and chunk.delta and chunk.delta.text:
-                content = chunk.delta.text
-                full_text = full_text + content
-                callback(content)
-        return full_text
+                yield chunk.delta.text

@@ -15,7 +15,6 @@ class AgentPlugin:
     def debug_info(self):
         """Print debug information"""
         self.nvim.out_write(f"Plugin loaded at: {__file__}\n")
-        self.nvim.out_write(f"Current module: {__name__}\n")
 
     @pynvim.command("AgentTest", nargs="*", range="")
     def testcommand(self, args, range):
@@ -36,3 +35,7 @@ class AgentPlugin:
     @pynvim.function("AgentClose", sync=True)
     def close_chat(self, args: List[str]):
         self.chat_interface.close_chat()
+
+    @pynvim.function("AgentClean", sync=True)
+    def clean_chat(self, args: List[str]):
+        self.chat_interface.clean_chat()
