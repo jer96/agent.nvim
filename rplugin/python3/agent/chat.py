@@ -14,6 +14,7 @@ class ChatInterface:
         self.input_win = None
         self.input_buf = None
         self.llm_provider = LLMProvider(nvim)
+        self.is_active = False
 
     def create_chat_panel(self):
         self._create_chat_buffers()
@@ -46,13 +47,12 @@ class ChatInterface:
     def _create_chat_windows(self):
         # Create the vertical split for chat
         self.nvim.command("vsplit")
-        self.nvim.command("vertical resize 65")
         self.chat_win = self.nvim.current.window
         self.nvim.current.buffer = self.chat_buf
 
         # Create input window as horizontal split
         self.nvim.command("split")
-        self.nvim.command("resize 5")
+        self.nvim.command("resize 10%")
         self.input_win = self.nvim.current.window
         self.nvim.current.buffer = self.input_buf
 
@@ -74,6 +74,7 @@ class ChatInterface:
         self.nvim.command("startinsert")
 
     def show_chat(self):
+        self.is_active = True
         # if windows are valid, reset view
         chat_win_valid = self.chat_win and self.chat_win.valid
         input_win_valid = self.input_win and self.input_win.valid
@@ -93,6 +94,7 @@ class ChatInterface:
         self.create_chat_panel()
 
     def close_chat(self):
+        self.is_active = False
         if self.input_win and self.input_win.valid:
             self.nvim.api.win_close(self.input_win, True)
         if self.chat_win and self.chat_win.valid:
@@ -154,38 +156,28 @@ class ChatInterface:
         message = "\n".join(lines)
         return message.strip()
 
-    def _reset_cursor(self):
-        # render markdown in chat window
-        self.nvim.current.window = self.chat_win
-        self.nvim.command("RenderMarkdown")
-        self.nvim.current.window = self.input_win
-        # reset cursor and keep insert mode
-        self.input_win.cursor = (1, 0)
-        self.nvim.command("startinsert")
-
     def send_message(self):
         message = self._get_input_buf_contents()
         if message:
-            # Clear input buffer
             self.input_buf[:] = [""]
-
-            # Add user message to chat
+            self.nvim.command("RenderMarkdown disable")
             self._add_message("user", message)
-
-            # Get response from LLM
             response = self.llm_provider.anthropic_complete(self.messages)
             if response:
                 self._add_message("assistant", response)
 
-        self._reset_cursor()
+        self.nvim.command("RenderMarkdown enable")
+        self.nvim.current.window = self.chat_win
 
     def send_message_stream(self):
         message = self._get_input_buf_contents()
         if message:
             self.input_buf[:] = [""]
+            self.nvim.command("RenderMarkdown disable")
             self._add_message("user", message)
             event_stream = self.llm_provider.anthropic_complete_stream(self.messages)
             # event_stream = self.llm_provider.bedrock_complete_stream(self.messages)
+            self.nvim.command("")
             for event in event_stream:
                 if self.messages[-1].get("role", "") == "user":
                     self.messages.append({"role": "assistant", "content": ""})
@@ -194,4 +186,5 @@ class ChatInterface:
                 prev_message["content"] = prev_message["content"] + event
                 self._update_chat_display()
 
-        self._reset_cursor()
+        self.nvim.command("RenderMarkdown enable")
+        self.nvim.current.window = self.chat_win

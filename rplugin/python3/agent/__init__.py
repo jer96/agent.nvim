@@ -39,3 +39,10 @@ class AgentPlugin:
     @pynvim.function("AgentClean", sync=True)
     def clean_chat(self, args: List[str]):
         self.chat_interface.clean_chat()
+
+    @pynvim.function("AgentToggle", sync=True)
+    def toggle_chat(self, args: List[str]):
+        if self.chat_interface.is_active:
+            self.chat_interface.close_chat()
+        else:
+            self.chat_interface.show_chat()
