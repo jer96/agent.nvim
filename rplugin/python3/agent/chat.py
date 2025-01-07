@@ -185,6 +185,7 @@ class ChatInterface:
             self.input_buf[:] = [""]
             self._add_message("user", message)
             event_stream = self.llm_provider.anthropic_complete_stream(self.messages)
+            # event_stream = self.llm_provider.bedrock_complete_stream(self.messages)
             for event in event_stream:
                 if self.messages[-1].get("role", "") == "user":
                     self.messages.append({"role": "assistant", "content": ""})
