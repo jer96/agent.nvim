@@ -2,7 +2,7 @@ from typing import Optional
 
 import pynvim
 
-from .llm import LLMProvider
+from .llm import LLMProviderFactory
 
 
 class ChatInterface:
@@ -13,8 +13,8 @@ class ChatInterface:
         self.chat_buf = None
         self.input_win = None
         self.input_buf = None
-        self.llm_provider = LLMProvider(nvim)
         self.is_active = False
+        self.llm_provider = LLMProviderFactory.create(self.nvim)
 
     def create_chat_panel(self):
         self._create_chat_buffers()
@@ -52,7 +52,7 @@ class ChatInterface:
 
         # Create input window as horizontal split
         self.nvim.command("split")
-        self.nvim.command("resize 10%")
+        self.nvim.command("resize 5")
         self.input_win = self.nvim.current.window
         self.nvim.current.buffer = self.input_buf
 
@@ -162,7 +162,7 @@ class ChatInterface:
             self.input_buf[:] = [""]
             self.nvim.command("RenderMarkdown disable")
             self._add_message("user", message)
-            response = self.llm_provider.anthropic_complete(self.messages)
+            response = self.llm_provider.complete(self.messages)
             if response:
                 self._add_message("assistant", response)
 
@@ -175,8 +175,7 @@ class ChatInterface:
             self.input_buf[:] = [""]
             self.nvim.command("RenderMarkdown disable")
             self._add_message("user", message)
-            event_stream = self.llm_provider.anthropic_complete_stream(self.messages)
-            # event_stream = self.llm_provider.bedrock_complete_stream(self.messages)
+            event_stream = self.llm_provider.complete_stream(self.messages)
             self.nvim.command("")
             for event in event_stream:
                 if self.messages[-1].get("role", "") == "user":
