@@ -3,6 +3,7 @@ from typing import List
 import pynvim
 
 from .chat import ChatInterface
+from .util.logger import setup_logger
 
 
 @pynvim.plugin
@@ -10,6 +11,7 @@ class AgentPlugin:
     def __init__(self, nvim: pynvim.Nvim):
         self.nvim = nvim
         self.chat_interface = ChatInterface(nvim)
+        setup_logger()
 
     @pynvim.command("AgentDebug", nargs=0, sync=True)
     def debug_info(self):

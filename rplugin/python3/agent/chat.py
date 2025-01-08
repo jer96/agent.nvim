@@ -1,8 +1,13 @@
+import logging
 from typing import Optional
 
 import pynvim
+from pynvim.api import Buffer
 
-from .llm import LLMProviderFactory
+from .llm.constants import BUFFER_CONTEXT_PROMPT, CLAUDE_SONNET, FORMATTED_SYSTEM_PROMPT, IGNORED_BUF_FILE_TYPES
+from .llm.factory import LLMProviderFactory
+
+logger = logging.getLogger(__name__)
 
 
 class ChatInterface:
@@ -156,6 +161,29 @@ class ChatInterface:
         message = "\n".join(lines)
         return message.strip()
 
+    def _get_system_prompt_with_context(self):
+        def _is_valid_buf(buf: Buffer) -> bool:
+            if not buf.valid:
+                return buf.valid
+            is_chat_buf = buf.number == self.chat_buf.number or buf.number == self.input_buf.number
+            filetype = buf.options.get("filetype", "unknown")
+            return not is_chat_buf and filetype not in IGNORED_BUF_FILE_TYPES
+
+        valid_bufs = [buf for buf in self.nvim.buffers if _is_valid_buf(buf)]
+        buf_contexts = []
+        for buf in valid_bufs:
+            content = "\n".join(buf[:]).strip()
+            buf_context = (
+                BUFFER_CONTEXT_PROMPT.replace("{{FILE}}", buf.name)
+                .replace("{{NUMBER}}", str(buf.number))
+                .replace("{{LINES}}", str(len(buf)))
+                .replace("{{CONTENT}}", content)
+            ).lstrip()
+            buf_contexts.append(buf_context)
+        active_buffers = "".join(buf_contexts)
+        system_prompt = FORMATTED_SYSTEM_PROMPT.replace("{{ACTIVE_BUFFERS}}", active_buffers).strip()
+        return system_prompt
+
     def send_message(self):
         message = self._get_input_buf_contents()
         if message:
@@ -175,7 +203,8 @@ class ChatInterface:
             self.input_buf[:] = [""]
             self.nvim.command("RenderMarkdown disable")
             self._add_message("user", message)
-            event_stream = self.llm_provider.complete_stream(self.messages)
+            system_prompt = self._get_system_prompt_with_context()
+            event_stream = self.llm_provider.complete_stream(self.messages, CLAUDE_SONNET, system_prompt)
             self.nvim.command("")
             for event in event_stream:
                 if self.messages[-1].get("role", "") == "user":

@@ -37,13 +37,15 @@ class AnthropicProvider(LLMProvider):
             self.nvim.err_write(f"Anthropic API error: {str(e)}\n")
             raise
 
-    def complete_stream(self, messages: List[Dict], model: Optional[str] = CLAUDE_SONNET) -> Generator[str, None, None]:
+    def complete_stream(
+        self, messages: List[Dict], model: Optional[str] = CLAUDE_SONNET, system_prompt: str = SYSTEM_PROMPT
+    ) -> Generator[str, None, None]:
         if not self.client:
             raise ValueError("Anthropic client not configured")
 
         try:
             response = self.client.messages.create(
-                system=SYSTEM_PROMPT,
+                system=system_prompt,
                 temperature=TEMPERATURE,
                 max_tokens=MAX_TOKENS,
                 model=model,

@@ -38,7 +38,7 @@ class BedrockProvider(LLMProvider):
             raise
 
     def complete_stream(
-        self, messages: List[Dict], model: Optional[str] = BEDROCK_CLAUDE
+        self, messages: List[Dict], model: Optional[str] = BEDROCK_CLAUDE, system_prompt: str = SYSTEM_PROMPT
     ) -> Generator[str, None, None]:
         if not self.client:
             raise ValueError("Bedrock client not configured")
@@ -47,7 +47,7 @@ class BedrockProvider(LLMProvider):
             "anthropic_version": "bedrock-2023-05-31",
             "max_tokens": MAX_TOKENS,
             "temperature": TEMPERATURE,
-            "system": SYSTEM_PROMPT,
+            "system": system_prompt,
             "messages": messages,
         }
 
