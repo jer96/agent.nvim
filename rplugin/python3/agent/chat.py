@@ -2,16 +2,21 @@ import logging
 from typing import Optional
 
 import pynvim
-from pynvim.api import Buffer
 
-from .llm.constants import BUFFER_CONTEXT_PROMPT, CLAUDE_SONNET, FORMATTED_SYSTEM_PROMPT, IGNORED_BUF_FILE_TYPES
+from .context import AgentContext
+from .llm.constants import (
+    CLAUDE_SONNET,
+    FORMATTED_SYSTEM_PROMPT,
+    create_buf_prompt,
+    create_buf_prompt_from_file,
+)
 from .llm.factory import LLMProviderFactory
 
 logger = logging.getLogger(__name__)
 
 
 class ChatInterface:
-    def __init__(self, nvim: pynvim.Nvim):
+    def __init__(self, nvim: pynvim.Nvim, context: AgentContext):
         self.nvim = nvim
         self.messages = []
         self.chat_win = None
@@ -20,6 +25,7 @@ class ChatInterface:
         self.input_buf = None
         self.is_active = False
         self.llm_provider = LLMProviderFactory.create(self.nvim)
+        self.context = context
 
     def create_chat_panel(self):
         self._create_chat_buffers()
@@ -46,6 +52,7 @@ class ChatInterface:
         self.input_buf = self.nvim.api.create_buf(False, True)
         self.input_buf.options["buftype"] = "nofile"
         self.input_buf.options["modifiable"] = True
+        self.input_buf.options["filetype"] = "agent_input"
         self.input_buf.name = " "
         self._set_chat_buf_keymaps()
 
@@ -162,27 +169,15 @@ class ChatInterface:
         return message.strip()
 
     def _get_system_prompt_with_context(self):
-        def _is_valid_buf(buf: Buffer) -> bool:
-            if not buf.valid:
-                return buf.valid
-            is_chat_buf = buf.number == self.chat_buf.number or buf.number == self.input_buf.number
-            filetype = buf.options.get("filetype", "unknown")
-            return not is_chat_buf and filetype not in IGNORED_BUF_FILE_TYPES
+        """Get system prompt with current buffer and file contexts."""
+        buf_contexts = [create_buf_prompt(buf) for buf in self.context.get_active_buffers()]
 
-        valid_bufs = [buf for buf in self.nvim.buffers if _is_valid_buf(buf)]
-        buf_contexts = []
-        for buf in valid_bufs:
-            content = "\n".join(buf[:]).strip()
-            buf_context = (
-                BUFFER_CONTEXT_PROMPT.replace("{{FILE}}", buf.name)
-                .replace("{{NUMBER}}", str(buf.number))
-                .replace("{{LINES}}", str(len(buf)))
-                .replace("{{CONTENT}}", content)
-            ).lstrip()
-            buf_contexts.append(buf_context)
-        active_buffers = "".join(buf_contexts)
-        system_prompt = FORMATTED_SYSTEM_PROMPT.replace("{{ACTIVE_BUFFERS}}", active_buffers).strip()
-        return system_prompt
+        additional_files = self.context.get_additional_files()
+        additional_file_contexts = [
+            context for context in [create_buf_prompt_from_file(file_path) for file_path in additional_files] if context
+        ]
+        active_buffers = "".join(buf_contexts + additional_file_contexts)
+        return FORMATTED_SYSTEM_PROMPT.replace("{{ACTIVE_BUFFERS}}", active_buffers).strip()
 
     def send_message(self):
         message = self._get_input_buf_contents()
@@ -213,6 +208,6 @@ class ChatInterface:
                 prev_message = self.messages[-1]
                 prev_message["content"] = prev_message["content"] + event
                 self._update_chat_display()
-
+            logger.debug(system_prompt)
         self.nvim.command("RenderMarkdown enable")
         self.nvim.current.window = self.chat_win
