@@ -1,4 +1,5 @@
 import logging
+import uuid
 from typing import Optional
 
 import pynvim
@@ -7,10 +8,12 @@ from .context import AgentContext
 from .llm.constants import (
     BASE_SYSTEM_PROMPT,
     FILE_CONTEXT_SYSTEM_PROMPT,
+    STORAGE_DIR,
     create_file_prompt_from_buf,
     create_file_prompt_from_file,
 )
 from .llm.factory import LLMProviderFactory
+from .storage import ConversationStorage
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +26,31 @@ class ChatInterface:
         self.chat_buf = None
         self.input_win = None
         self.input_buf = None
+        self.current_conversation_id = None
+        self.context = context
         self.is_active = False
         self.llm_provider = LLMProviderFactory.create(self.nvim)
-        self.context = context
+        self.storage = ConversationStorage(STORAGE_DIR)
+
+    def _start_new_conversation(self):
+        """Start a new conversation with a unique ID and initial system prompt."""
+        self.current_conversation_id = str(uuid.uuid4())
+        self.messages = []
+
+        # Add and store initial system prompt
+        system_prompt = self._get_system_prompt_with_context()
+        storage_messages = [{"role": "system", "content": system_prompt}]
+        self.storage.save_conversation(self.current_conversation_id, storage_messages)
+
+        logger.debug(
+            f"Started new conversation with ID: {
+                self.current_conversation_id}"
+        )
+
+    def _save_current_conversation(self):
+        """Save the current conversation to storage."""
+        if self.current_conversation_id and self.messages:
+            self.storage.save_conversation(self.current_conversation_id, self.messages)
 
     def create_chat_panel(self):
         self._create_chat_buffers()
@@ -122,11 +147,6 @@ class ChatInterface:
         self.chat_buf = None
         self.input_buf = None
 
-    def clean_chat(self):
-        self.close_chat()
-        self._delete_chat_buffers()
-        self.messages = []
-
     def _update_chat_display(self):
         if not self.chat_buf or not self.chat_buf.valid:
             return
@@ -155,10 +175,6 @@ class ChatInterface:
 
         # Scroll to bottom
         self.chat_win.cursor = (len(display_lines), 0)
-
-    def _add_message(self, role: str, content: str):
-        self.messages.append({"role": role, "content": content})
-        self._update_chat_display()
 
     def _get_input_buf_contents(self) -> Optional[str]:
         if not self.input_buf or not self.input_buf.valid:
@@ -199,22 +215,69 @@ class ChatInterface:
         self.nvim.command("RenderMarkdown enable")
         self.nvim.current.window = self.chat_win
 
+    def _add_message(self, role: str, content: str):
+        """Add a message and save the conversation."""
+        self.messages.append({"role": role, "content": content})
+        self._save_current_conversation()
+        self._update_chat_display()
+
     def send_message_stream(self):
+        if self.current_conversation_id is None:
+            self._start_new_conversation()
+
         message = self._get_input_buf_contents()
         if message:
             self.input_buf[:] = [""]
             self.nvim.command("RenderMarkdown disable")
-            self._add_message("user", message)
+
+            # Get system prompt
             system_prompt = self._get_system_prompt_with_context()
-            event_stream = self.llm_provider.complete_stream(messages=self.messages, system_prompt=system_prompt)
-            self.nvim.command("")
+
+            # Add user message to display messages
+            self._add_message("user", message)
+
+            # Get response using display messages but excluding system messages
+            display_messages = [msg for msg in self.messages if msg["role"] != "system"]
+            event_stream = self.llm_provider.complete_stream(messages=display_messages, system_prompt=system_prompt)
+
+            assistant_content = ""
             for event in event_stream:
                 if self.messages[-1].get("role", "") == "user":
                     self.messages.append({"role": "assistant", "content": ""})
 
-                prev_message = self.messages[-1]
-                prev_message["content"] = prev_message["content"] + event
-                self._update_chat_display()
-            logger.debug(system_prompt)
+                assistant_content += event
+                self.messages[-1]["content"] = assistant_content
+                if self.chat_buf and self.chat_buf.valid and self.chat_win and self.chat_win.valid:
+                    self._update_chat_display()
+
+            # Save the complete conversation
+            if self.current_conversation_id:
+                storage_messages = [{"role": "system", "content": system_prompt}] + self.messages
+                self.storage.save_conversation(self.current_conversation_id, storage_messages)
+
         self.nvim.command("RenderMarkdown enable")
-        self.nvim.current.window = self.chat_win
+        if self.chat_win and self.chat_win.valid:
+            self.nvim.current.window = self.chat_win
+
+    def load_conversation(self, conversation_id: str):
+        """Load a specific conversation."""
+        messages = self.storage.load_conversation(conversation_id)
+        if messages:
+            # Filter out system messages when loading
+            self.messages = [msg for msg in messages if msg["role"] != "system"]
+            self.current_conversation_id = conversation_id
+
+            # Make sure chat interface is visible
+            self.show_chat()
+
+            # Update the display after ensuring windows are created
+            if self.chat_buf and self.chat_buf.valid and self.chat_win and self.chat_win.valid:
+                self._update_chat_display()
+            return True
+        return False
+
+    def clean_chat(self):
+        self.close_chat()
+        self._delete_chat_buffers()
+        self.messages = []
+        self._start_new_conversation()

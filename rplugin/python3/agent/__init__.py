@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import List
 
 import pynvim
@@ -82,3 +83,34 @@ class AgentPlugin:
     def toggle_buffer(self, args: List[str]):
         if args and len(args) > 0:
             self.context.toggle_buffer(int(args[0]))
+
+    @pynvim.command("AgentListConversations", sync=True)
+    def list_conversations(self):
+        conversations = self.chat_interface.storage.list_conversations()
+
+        # Create a temporary buffer to show conversations
+        buf = self.nvim.api.create_buf(False, True)
+        lines = ["Conversations:"]
+        for conv in conversations:
+            timestamp = datetime.fromisoformat(conv["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+            lines.append(
+                f"ID: {conv['id']} | Created: {
+                    timestamp} | Messages: {conv['message_count']}"
+            )
+
+        self.nvim.api.buf_set_lines(buf, 0, -1, True, lines)
+
+        # Show in a split
+        self.nvim.command("split")
+        self.nvim.current.buffer = buf
+
+    @pynvim.command("AgentLoadConversation", nargs=1, sync=True)
+    def load_conversation(self, args):
+        try:
+            conv_id = args[0]
+            if self.chat_interface.load_conversation(conv_id):
+                self.nvim.out_write(f"Loaded conversation {conv_id}\n")
+            else:
+                self.nvim.err_write(f"Conversation {conv_id} not found\n")
+        except Exception as e:
+            self.nvim.err_write(f"Error loading conversation: {str(e)}\n")

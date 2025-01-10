@@ -1,3 +1,4 @@
+STORAGE_DIR = "/Users/jeremiahbill/nvim-plugins/conversations"
 SYSTEM_PROMPT = "You are an AI assistant embedded into Neovim text editor."
 CLAUDE_SONNET = "claude-3-5-sonnet-latest"
 BEDROCK_CLAUDE = "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
