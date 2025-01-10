@@ -5,9 +5,10 @@ import pynvim
 
 from .context import AgentContext
 from .llm.constants import (
-    FORMATTED_SYSTEM_PROMPT,
-    create_buf_prompt,
-    create_buf_prompt_from_file,
+    BASE_SYSTEM_PROMPT,
+    FILE_CONTEXT_SYSTEM_PROMPT,
+    create_file_prompt_from_buf,
+    create_file_prompt_from_file,
 )
 from .llm.factory import LLMProviderFactory
 
@@ -169,14 +170,21 @@ class ChatInterface:
 
     def _get_system_prompt_with_context(self):
         """Get system prompt with current buffer and file contexts."""
-        buf_contexts = [create_buf_prompt(buf) for buf in self.context.get_active_buffers()]
+        active_bufs = self.context.get_active_buffers()
+        buf_contexts = [create_file_prompt_from_buf(buf) for buf in active_bufs]
 
-        additional_files = self.context.get_additional_files()
-        additional_file_contexts = [
-            context for context in [create_buf_prompt_from_file(file_path) for file_path in additional_files] if context
+        files = self.context.get_additional_files()
+        file_contexts = [
+            context for context in [create_file_prompt_from_file(file_path) for file_path in files] if context
         ]
-        active_buffers = "".join(buf_contexts + additional_file_contexts)
-        return FORMATTED_SYSTEM_PROMPT.replace("{{ACTIVE_BUFFERS}}", active_buffers).strip()
+
+        all_file_contexts = buf_contexts + file_contexts
+
+        if not all_file_contexts:
+            return BASE_SYSTEM_PROMPT
+
+        files_content = "".join(all_file_contexts)
+        return f"{BASE_SYSTEM_PROMPT} {FILE_CONTEXT_SYSTEM_PROMPT.replace("{{FILES}}", files_content)}"
 
     def send_message(self):
         message = self._get_input_buf_contents()

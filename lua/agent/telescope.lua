@@ -27,7 +27,7 @@ local context_previewer = previewers.new_buffer_previewer({
     for _, buf in ipairs(context_data.buffers) do
       local status_symbol = buf.active and "✓" or "☐"
       local relative_path = vim.fn.fnamemodify(buf.name, ":.")
-      table.insert(lines, string.format("%s [%d] %s", status_symbol, buf.number, relative_path))
+      table.insert(lines, string.format("%s %s", status_symbol, relative_path))
     end
 
     -- Add additional files
@@ -42,9 +42,13 @@ local context_previewer = previewers.new_buffer_previewer({
     end
 
     -- Add help text
+    table.insert(lines, "")
     table.insert(lines, "Commands:")
     table.insert(lines, "- <CR>: Add selected file")
-    table.insert(lines, "- <C-d>: Remove selected file")
+    table.insert(lines, "- <C-d>: Remove selected file/buffer")
+    table.insert(lines, "- <C-f>: Clear all files")
+    table.insert(lines, "- <C-b>: Clear all buffers")
+    table.insert(lines, "- <C-x>: Clear everything")
     table.insert(lines, "- q: Close")
 
     -- Set the lines in the preview buffer
@@ -75,10 +79,24 @@ local context_previewer = previewers.new_buffer_previewer({
   end,
 })
 
+-- Helper function to refresh picker
+local function refresh_picker(prompt_bufnr)
+  actions.close(prompt_bufnr)
+  vim.schedule(function()
+    M.file_picker_with_context()
+  end)
+end
+
+-- Helper function to map both normal and insert modes
+local function map_both_modes(prompt_bufnr, map, key, fn)
+  map("i", key, fn)
+  map("n", key, fn)
+end
+
 -- telescope.lua
 M.file_picker_with_context = function()
   builtin.find_files({
-    prompt_title = "Agent Context Configuration",
+    prompt_title = "Configure Agent Context",
     previewer = context_previewer,
     layout_strategy = "horizontal",
     layout_config = {
@@ -92,87 +110,96 @@ M.file_picker_with_context = function()
       local full_path = vim.fn.fnamemodify(path, ":p")
       local relative_path = vim.fn.fnamemodify(path, ":.")
 
-      -- Check if file is in additional_files (using full path)
-      local is_added = false
-      for _, file in ipairs(context_data.files) do
-        if vim.fn.fnamemodify(file, ":p") == full_path then
-          is_added = true
+      -- First check if it's a buffer (whether active or not)
+      local is_buffer = false
+      local is_active = false
+      for _, buf in ipairs(context_data.buffers) do
+        if vim.fn.fnamemodify(buf.name, ":p") == full_path then
+          is_buffer = true
+          is_active = buf.active
           break
         end
       end
 
-      -- Check if file is an active buffer (using full path)
-      if not is_added then
-        for _, buf in ipairs(context_data.buffers) do
-          if vim.fn.fnamemodify(buf.name, ":p") == full_path and buf.active then
+      -- Only check additional_files if it's not a buffer
+      local is_added = false
+      if not is_buffer then
+        for _, file in ipairs(context_data.files) do
+          if vim.fn.fnamemodify(file, ":p") == full_path then
             is_added = true
             break
           end
         end
       end
 
-      -- Add status indicator to path
-      if is_added then
+      -- Add appropriate status indicator
+      if is_buffer then
+        return (is_active and "✓" or "☐") .. " " .. relative_path
+      elseif is_added then
         return "✓ " .. relative_path
       else
-        return "  " .. relative_path
+        return "☐ " .. relative_path
       end
     end,
     attach_mappings = function(prompt_bufnr, map)
       -- Add file to context and refresh search
       actions.select_default:replace(function()
         local selection = action_state.get_selected_entry()
-        local current_picker = action_state.get_current_picker(prompt_bufnr)
-        local prompt = current_picker:_get_prompt()
+        local full_path = vim.fn.fnamemodify(selection.value, ":p")
 
-        -- Use the full path from selection.value instead of the displayed path
-        vim.fn.AgentContextAddFile(vim.fn.fnamemodify(selection.value, ":p"))
+        -- Check if this is a buffer first
+        local context_data = vim.fn.AgentContextGetData()
+        local is_buffer = false
+        for _, buf in ipairs(context_data.buffers) do
+          if vim.fn.fnamemodify(buf.name, ":p") == full_path then
+            vim.fn.AgentContextToggleBuffer(buf.number)
+            is_buffer = true
+            break
+          end
+        end
 
-        -- Close and reopen picker with same search
-        actions.close(prompt_bufnr)
-        vim.schedule(function()
-          M.file_picker_with_context()
-          vim.api.nvim_feedkeys(prompt, "n", true)
-        end)
+        -- Only add to additional files if it's not a buffer
+        if not is_buffer then
+          vim.fn.AgentContextAddFile(full_path)
+        end
+
+        refresh_picker(prompt_bufnr)
       end)
 
-      -- Remove file from context
-      map("i", "<C-d>", function()
+      -- Handle file/buffer removal
+      local function remove_selected()
         local selection = action_state.get_selected_entry()
-        local current_picker = action_state.get_current_picker(prompt_bufnr)
-        local prompt = current_picker:_get_prompt()
+        local full_path = vim.fn.fnamemodify(selection.value, ":p")
 
-        -- Use the full path from selection.value
-        vim.fn.AgentContextRemoveFile(vim.fn.fnamemodify(selection.value, ":p"))
+        -- Check if this is a buffer first
+        for _, buf in ipairs(vim.fn.AgentContextGetData().buffers) do
+          if vim.fn.fnamemodify(buf.name, ":p") == full_path then
+            vim.fn.AgentContextToggleBuffer(buf.number)
+            refresh_picker(prompt_bufnr)
+            return
+          end
+        end
 
-        -- Close and reopen picker with same search
-        actions.close(prompt_bufnr)
-        vim.schedule(function()
-          M.file_picker_with_context()
-          vim.api.nvim_feedkeys(prompt, "n", true)
-        end)
+        -- If not a buffer, treat as additional file
+        vim.fn.AgentContextRemoveFile(full_path)
+        refresh_picker(prompt_bufnr)
+      end
+
+      -- Map all the commands
+      map_both_modes(prompt_bufnr, map, "<C-d>", remove_selected)
+      map_both_modes(prompt_bufnr, map, "<C-f>", function()
+        vim.fn.AgentContextClearFiles()
+        refresh_picker(prompt_bufnr)
       end)
-      map("n", "<C-d>", function()
-        local selection = action_state.get_selected_entry()
-        local current_picker = action_state.get_current_picker(prompt_bufnr)
-        local prompt = current_picker:_get_prompt()
-
-        -- Use the full path from selection.value
-        vim.fn.AgentContextRemoveFile(vim.fn.fnamemodify(selection.value, ":p"))
-
-        -- Close and reopen picker with same search
-        actions.close(prompt_bufnr)
-        vim.schedule(function()
-          M.file_picker_with_context()
-          vim.api.nvim_feedkeys(prompt, "n", true)
-        end)
+      map_both_modes(prompt_bufnr, map, "<C-b>", function()
+        vim.fn.AgentContextClearBuffers()
+        refresh_picker(prompt_bufnr)
       end)
-
-      -- Close picker
-      map("i", "q", function()
-        actions.close(prompt_bufnr)
+      map_both_modes(prompt_bufnr, map, "<C-x>", function()
+        vim.fn.AgentContextClearAll()
+        refresh_picker(prompt_bufnr)
       end)
-      map("n", "q", function()
+      map_both_modes(prompt_bufnr, map, "q", function()
         actions.close(prompt_bufnr)
       end)
 

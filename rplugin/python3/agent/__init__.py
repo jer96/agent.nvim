@@ -64,3 +64,21 @@ class AgentPlugin:
     def remove_file(self, args: List[str]):
         if args and len(args) > 0:
             self.context.remove_file(args[0])
+
+    @pynvim.function("AgentContextClearFiles", sync=True)
+    def clear_files(self, args: List[str]):
+        self.context.clear_additional_files()
+
+    @pynvim.function("AgentContextClearBuffers", sync=True)
+    def clear_buffers(self, args: List[str]):
+        self.context.clear_active_buffers()
+
+    @pynvim.function("AgentContextClearAll", sync=True)
+    def clear_all(self, args: List[str]):
+        self.context.clear_active_buffers()
+        self.context.clear_additional_files()
+
+    @pynvim.function("AgentContextToggleBuffer", sync=True)
+    def toggle_buffer(self, args: List[str]):
+        if args and len(args) > 0:
+            self.context.toggle_buffer(int(args[0]))

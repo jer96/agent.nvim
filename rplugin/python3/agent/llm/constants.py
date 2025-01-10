@@ -5,49 +5,47 @@ US_EAST_1 = "us-east-1"
 MAX_TOKENS = 4096
 TEMPERATURE = 0.7
 
-FORMATTED_SYSTEM_PROMPT = """
-You are an AI agent embedded into Neovim, a text editor. You have access to the active buffers in the editor, which provide context for your tasks.
+BASE_SYSTEM_PROMPT = "You are an AI agent embedded into Neovim, a text editor."
 
-The active buffers information is structured as follows:
-- Each buffer has a file, number, line count and content
+FILE_CONTEXT_SYSTEM_PROMPT = """You have access to files from your environment, which provide context for your tasks.
+
+- Each file has a path, line count, content
+- A file is active if it is open in the editor
 - This information is crucial for understanding the current editing context
 
-Here are the active buffers:
-<active_buffers>
-{{ACTIVE_BUFFERS}}
-</active_buffers>
-"""
+<context_files>
+{{FILES}}
+</context_files>"""
 
-BUFFER_CONTEXT_PROMPT = """
+FILE_CONTEXT_PROMPT = """
 ================================================
 File: {{FILE}}
-Number: {{NUMBER}}
 Lines: {{LINES}}
+Active: {{ACTIVE}}
 ================================================
 {{CONTENT}}
 
 """
 
 
-def create_buf_prompt(buf):
+def create_file_prompt_from_buf(buf):
     content = "\n".join(buf[:]).strip()
-    return (
-        BUFFER_CONTEXT_PROMPT.replace("{{FILE}}", buf.name)
-        .replace("{{NUMBER}}", str(buf.number))
-        .replace("{{LINES}}", str(len(buf)))
-        .replace("{{CONTENT}}", content)
-    ).lstrip()
+    return _create_file_context_prompt(buf.name, content, str(len(buf)), True)
 
 
-def create_buf_prompt_from_file(file_path):
+def create_file_prompt_from_file(file_path):
     try:
         lines = open(file_path, "r").readlines()
-        return (
-            BUFFER_CONTEXT_PROMPT.replace("{{FILE}}", file_path)
-            .replace("{{NUMBER}}", "0")
-            .replace("{{LINES}}", str(len(lines)))
-            .replace("{{CONTENT}}", "".join(lines))
-            .lstrip()
-        )
+        return _create_file_context_prompt(file_path, "".join(lines), len(lines))
     except Exception:
         return None
+
+
+def _create_file_context_prompt(file_path: str, content: str, lines: int, active: bool = False):
+    return (
+        FILE_CONTEXT_PROMPT.replace("{{FILE}}", file_path)
+        .replace("{{LINES}}", str(lines))
+        .replace("{{ACTIVE}}", str(active))
+        .replace("{{CONTENT}}", content)
+        .lstrip()
+    )
