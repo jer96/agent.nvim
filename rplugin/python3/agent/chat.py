@@ -5,7 +5,6 @@ import pynvim
 
 from .context import AgentContext
 from .llm.constants import (
-    CLAUDE_SONNET,
     FORMATTED_SYSTEM_PROMPT,
     create_buf_prompt,
     create_buf_prompt_from_file,
@@ -199,7 +198,7 @@ class ChatInterface:
             self.nvim.command("RenderMarkdown disable")
             self._add_message("user", message)
             system_prompt = self._get_system_prompt_with_context()
-            event_stream = self.llm_provider.complete_stream(self.messages, CLAUDE_SONNET, system_prompt)
+            event_stream = self.llm_provider.complete_stream(messages=self.messages, system_prompt=system_prompt)
             self.nvim.command("")
             for event in event_stream:
                 if self.messages[-1].get("role", "") == "user":

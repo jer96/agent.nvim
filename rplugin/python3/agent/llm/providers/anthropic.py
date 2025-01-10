@@ -38,7 +38,7 @@ class AnthropicProvider(LLMProvider):
             raise
 
     def complete_stream(
-        self, messages: List[Dict], model: Optional[str] = CLAUDE_SONNET, system_prompt: str = SYSTEM_PROMPT
+        self, *, messages: List[Dict], model: Optional[str] = CLAUDE_SONNET, system_prompt: str = SYSTEM_PROMPT
     ) -> Generator[str, None, None]:
         if not self.client:
             raise ValueError("Anthropic client not configured")

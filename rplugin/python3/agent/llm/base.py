@@ -9,6 +9,6 @@ class LLMProvider(ABC):
 
     @abstractmethod
     def complete_stream(
-        self, messages: List[Dict], model: Optional[str] = None, system_prompt: str = None
+        self, *, messages: List[Dict], model: Optional[str] = None, system_prompt: str = None
     ) -> Generator[str, None, None]:
         pass
