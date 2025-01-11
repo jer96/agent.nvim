@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List
+from typing import Dict, List
 
 import pynvim
 
@@ -50,10 +50,10 @@ class AgentPlugin:
 
     @pynvim.command("AgentContext", sync=True)
     def show_context_picker(self):
-        self.nvim.command('lua require("agent.telescope").file_picker_with_context()')
+        self.nvim.command('lua require("agent.ui.telescope").file_picker_with_context()')
 
     @pynvim.function("AgentContextGetData", sync=True)
-    def get_context_data(self, args: List[str]):
+    def get_context_data(self, args: List[str]) -> Dict:
         return self.context.get_context_data()
 
     @pynvim.function("AgentContextAddFile", sync=True)
@@ -84,29 +84,17 @@ class AgentPlugin:
         if args and len(args) > 0:
             self.context.toggle_buffer(int(args[0]))
 
-    @pynvim.command("AgentListConversations", sync=True)
-    def list_conversations(self):
+    @pynvim.function("AgentListConversations", sync=True)
+    def list_conversations(self, args) -> List[Dict]:
         conversations = self.chat_interface.storage.list_conversations()
-
-        # Create a temporary buffer to show conversations
-        buf = self.nvim.api.create_buf(False, True)
-        # Set a specific name for the buffer
-        self.nvim.api.buf_set_name(buf, "agent-conversations-list")
-        buf.options["filetype"] = "agent.nvim"
-
-        lines = ["Conversations:"]
-        for conv in conversations:
-            timestamp = datetime.fromisoformat(conv["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
-            lines.append(
-                f"ID: {conv['id']} | Created: {
-                    timestamp} | Messages: {conv['message_count']}"
-            )
-
-        self.nvim.api.buf_set_lines(buf, 0, -1, True, lines)
-
-        # Show in a split
-        self.nvim.command("split")
-        self.nvim.current.buffer = buf
+        return [
+            {
+                "id": conv["id"],
+                "timestamp": datetime.fromisoformat(conv["timestamp"]).strftime("%Y-%m-%d %H:%M:%S"),
+                "message_count": conv["message_count"],
+            }
+            for conv in conversations
+        ]
 
     @pynvim.command("AgentLoadConversation", nargs=1, sync=True)
     def load_conversation(self, args):
