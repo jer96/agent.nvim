@@ -90,6 +90,9 @@ class AgentPlugin:
 
         # Create a temporary buffer to show conversations
         buf = self.nvim.api.create_buf(False, True)
+        # Set a specific name for the buffer
+        self.nvim.api.buf_set_name(buf, "agent-conversations-list")
+
         lines = ["Conversations:"]
         for conv in conversations:
             timestamp = datetime.fromisoformat(conv["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
@@ -108,6 +111,17 @@ class AgentPlugin:
     def load_conversation(self, args):
         try:
             conv_id = args[0]
+            # Close the conversations list buffer if it exists
+            for buf in self.nvim.api.list_bufs():
+                if self.nvim.api.buf_get_name(buf).endswith("agent-conversations-list"):
+                    # Find and close any window displaying this buffer
+                    for win in self.nvim.api.list_wins():
+                        if self.nvim.api.win_get_buf(win) == buf:
+                            self.nvim.api.win_close(win, True)
+                    # Delete the buffer
+                    self.nvim.api.buf_delete(buf, {"force": True})
+                    break
+
             if self.chat_interface.load_conversation(conv_id):
                 self.nvim.out_write(f"Loaded conversation {conv_id}\n")
             else:
