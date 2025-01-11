@@ -5,7 +5,7 @@ from anthropic import Anthropic
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ..base import LLMProvider
-from ..constants import CLAUDE_SONNET, MAX_TOKENS, SYSTEM_PROMPT, TEMPERATURE
+from ..constants import BASE_SYSTEM_PROMPT, CLAUDE_SONNET, MAX_TOKENS, TEMPERATURE
 
 
 class AnthropicProvider(LLMProvider):
@@ -26,7 +26,7 @@ class AnthropicProvider(LLMProvider):
 
         try:
             response = self.client.messages.create(
-                system=SYSTEM_PROMPT,
+                system=BASE_SYSTEM_PROMPT,
                 temperature=TEMPERATURE,
                 max_tokens=MAX_TOKENS,
                 model=model,
@@ -38,7 +38,7 @@ class AnthropicProvider(LLMProvider):
             raise
 
     def complete_stream(
-        self, *, messages: List[Dict], model: Optional[str] = CLAUDE_SONNET, system_prompt: str = SYSTEM_PROMPT
+        self, *, messages: List[Dict], model: Optional[str] = CLAUDE_SONNET, system_prompt: str = BASE_SYSTEM_PROMPT
     ) -> Generator[str, None, None]:
         if not self.client:
             raise ValueError("Anthropic client not configured")

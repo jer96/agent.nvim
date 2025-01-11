@@ -5,7 +5,7 @@ import boto3
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ..base import LLMProvider
-from ..constants import BEDROCK_CLAUDE, MAX_TOKENS, SYSTEM_PROMPT, TEMPERATURE, US_EAST_1
+from ..constants import BASE_SYSTEM_PROMPT, BEDROCK_CLAUDE, MAX_TOKENS, TEMPERATURE, US_EAST_1
 
 
 class BedrockProvider(LLMProvider):
@@ -25,7 +25,7 @@ class BedrockProvider(LLMProvider):
             "anthropic_version": "bedrock-2023-05-31",
             "max_tokens": MAX_TOKENS,
             "temperature": TEMPERATURE,
-            "system": SYSTEM_PROMPT,
+            "system": BASE_SYSTEM_PROMPT,
             "messages": messages,
         }
 
@@ -38,7 +38,7 @@ class BedrockProvider(LLMProvider):
             raise
 
     def complete_stream(
-        self, *, messages: List[Dict], model: Optional[str] = BEDROCK_CLAUDE, system_prompt: str = SYSTEM_PROMPT
+        self, *, messages: List[Dict], model: Optional[str] = BEDROCK_CLAUDE, system_prompt: str = BASE_SYSTEM_PROMPT
     ) -> Generator[str, None, None]:
         if not self.client:
             raise ValueError("Bedrock client not configured")

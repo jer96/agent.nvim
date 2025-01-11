@@ -8,7 +8,6 @@ from .context import AgentContext
 from .llm.constants import (
     BASE_SYSTEM_PROMPT,
     FILE_CONTEXT_SYSTEM_PROMPT,
-    STORAGE_DIR,
     create_file_prompt_from_buf,
     create_file_prompt_from_file,
 )
@@ -30,7 +29,7 @@ class ChatInterface:
         self.context = context
         self.is_active = False
         self.llm_provider = LLMProviderFactory.create(self.nvim)
-        self.storage = ConversationStorage(STORAGE_DIR)
+        self.storage = ConversationStorage(self.nvim)
 
     def _start_new_conversation(self):
         """Start a new conversation with a unique ID and initial system prompt."""
