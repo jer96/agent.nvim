@@ -92,6 +92,7 @@ class AgentPlugin:
         buf = self.nvim.api.create_buf(False, True)
         # Set a specific name for the buffer
         self.nvim.api.buf_set_name(buf, "agent-conversations-list")
+        buf.options["filetype"] = "agent.nvim"
 
         lines = ["Conversations:"]
         for conv in conversations:

@@ -76,7 +76,7 @@ class ChatInterface:
         self.input_buf = self.nvim.api.create_buf(False, True)
         self.input_buf.options["buftype"] = "nofile"
         self.input_buf.options["modifiable"] = True
-        self.input_buf.options["filetype"] = "agent_input"
+        self.input_buf.options["filetype"] = "agent.nvim"
         self.input_buf.name = " "
         self._set_chat_buf_keymaps()
 

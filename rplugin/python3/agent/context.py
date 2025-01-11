@@ -4,7 +4,7 @@ from typing import Dict, List
 import pynvim
 from pynvim.api import Buffer
 
-IGNORED_BUF_FILE_TYPES = {"alpha", "unkown", "NvimTree", "TelescopePrompt", "TelescopeResult", "agent_input"}
+IGNORED_BUF_FILE_TYPES = {"alpha", "unkown", "NvimTree", "TelescopePrompt", "TelescopeResult", "agent.nvim"}
 IGNORED_BUF_PATTERNS = {"agent chat"}
 
 
