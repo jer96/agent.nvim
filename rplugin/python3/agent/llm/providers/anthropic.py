@@ -1,5 +1,5 @@
 import os
-from typing import Dict, Generator, List, Optional
+from typing import Dict, Generator, List
 
 from anthropic import Anthropic
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -19,24 +19,32 @@ class AnthropicProvider(LLMProvider):
         return Anthropic(api_key=api_key)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
-    def complete(self, messages: List[Dict], model: Optional[str] = CLAUDE_SONNET) -> str:
+    def complete(
+        self,
+        *,
+        messages: List[Dict],
+        tools: List[Dict],
+        model: str = CLAUDE_SONNET,
+        system_prompt: str = BASE_SYSTEM_PROMPT,
+    ) -> List[Dict]:
         if not self.client:
             raise ValueError("Anthropic client not configured")
 
         try:
             response = self.client.messages.create(
-                system=BASE_SYSTEM_PROMPT,
+                system=system_prompt,
                 temperature=TEMPERATURE,
                 max_tokens=MAX_TOKENS,
                 model=model,
                 messages=messages,
+                tools=tools,
             )
-            return response.content[0].text
+            return response.content
         except Exception as e:
             raise e
 
     def complete_stream(
-        self, *, messages: List[Dict], model: Optional[str] = CLAUDE_SONNET, system_prompt: str = BASE_SYSTEM_PROMPT
+        self, *, messages: List[Dict], model: str = CLAUDE_SONNET, system_prompt: str = BASE_SYSTEM_PROMPT
     ) -> Generator[str, None, None]:
         if not self.client:
             raise ValueError("Anthropic client not configured")

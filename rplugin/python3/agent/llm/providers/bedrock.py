@@ -16,7 +16,14 @@ class BedrockProvider(LLMProvider):
         return boto3.client(service_name="bedrock-runtime", region_name=US_EAST_1)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
-    def complete(self, messages: List[Dict], model: Optional[str] = BEDROCK_CLAUDE) -> str:
+    def complete(
+        self,
+        *,
+        messages: List[Dict],
+        tools: List[Dict],
+        model: str = BEDROCK_CLAUDE,
+        system_prompt: str = BASE_SYSTEM_PROMPT,
+    ) -> List[Dict]:
         if not self.client:
             raise ValueError("Bedrock client not configured")
 
@@ -31,12 +38,12 @@ class BedrockProvider(LLMProvider):
         try:
             response = self.client.invoke_model(modelId=model, body=json.dumps(request_body))
             response_body = json.loads(response["body"].read())
-            return response_body["content"][0]["text"]
+            return response_body["content"]
         except Exception as e:
             raise e
 
     def complete_stream(
-        self, *, messages: List[Dict], model: Optional[str] = BEDROCK_CLAUDE, system_prompt: str = BASE_SYSTEM_PROMPT
+        self, *, messages: List[Dict], model: str = BEDROCK_CLAUDE, system_prompt: str = BASE_SYSTEM_PROMPT
     ) -> Generator[str, None, None]:
         if not self.client:
             raise ValueError("Bedrock client not configured")

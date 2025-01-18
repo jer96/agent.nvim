@@ -233,10 +233,24 @@ class ChatInterface:
             display_lines.append("---")
             display_lines.append("")
 
-            wrapped_content = msg["content"].split("\n")
-            for line in wrapped_content:
-                display_lines.append(line)
-            display_lines.append("")
+            content = msg["content"]
+            if isinstance(content, str):
+                wrapped_content = msg["content"].split("\n")
+                for line in wrapped_content:
+                    display_lines.append(line)
+                display_lines.append("")
+            elif isinstance(content, list):
+                for con in content:
+                    logger.debug(con)
+                    if con.get("type", "") == "tool_result":
+                        tool_content = con.get("content", [])
+                        for tool_con in tool_content:
+                            if tool_con.get("type", "") == "text":
+                                wrapped_content = tool_con.get("text", "").split("\n")
+                                display_lines.append("Tool Results")
+                                for line in wrapped_content:
+                                    display_lines.append(line)
+                                display_lines.append("")
 
         self.chat_buf.options["modifiable"] = True
         self.chat_buf[:] = display_lines
@@ -244,6 +258,7 @@ class ChatInterface:
 
         # Scroll to bottom
         self.chat_win.cursor = (len(display_lines), 0)
+        logger.debug(self.messages)
 
     def _get_input_buf_contents(self) -> Optional[str]:
         if not self.input_buf or not self.input_buf.valid:
@@ -273,16 +288,79 @@ class ChatInterface:
 
     def send_message(self):
         message = self._get_input_buf_contents()
-        if message:
-            self.input_buf[:] = [""]
-            self.nvim.command("RenderMarkdown disable")
-            self._add_message("user", message)
-            response = self.llm_provider.complete(self.messages)
-            if response:
-                self._add_message("assistant", response)
+        if not message:
+            return
 
-        self.nvim.command("RenderMarkdown enable")
-        self.nvim.current.window = self.chat_win
+        if self.current_conversation_id is None:
+            self._start_new_conversation()
+
+        self.input_buf[:] = [""]
+        self._add_message("user", message)
+        system_prompt = self._get_system_prompt_with_context()
+
+        async def mcp_send():
+            tools = await self.mcp_client.session.list_tools()
+            available_tools = [
+                {"name": tool.name, "description": tool.description, "input_schema": tool.inputSchema}
+                for tool in tools.tools
+            ]
+
+            logger.debug(f"mcp tools {available_tools} ")
+            response_content = self.llm_provider.complete(
+                messages=self.messages, tools=available_tools, system_prompt=system_prompt
+            )
+
+            final_text = []
+            tool_results = []
+            for content in response_content:
+                if content.type == "text":
+                    final_text.append(content.text)
+                elif content.type == "tool_use":
+                    tool_name = content.name
+                    tool_args = content.input
+                    tool_id = content.id
+                    logger.debug("--- start tool ---")
+                    logger.debug(tool_name)
+                    logger.debug(tool_args)
+                    logger.debug(tool_id)
+                    result = await self.mcp_client.session.call_tool(tool_name, tool_args)
+                    tool_result = {}
+                    tool_result["type"] = "tool_result"
+                    tool_result["tool_use_id"] = tool_id
+                    tool_result["content"] = []
+                    for content in result.content:
+                        if content.type == "text":
+                            tool_result["content"].append({"type": content.type, "text": content.text})
+                    tool_results.append(tool_result)
+                    logger.debug("--- end tool ---")
+
+            return ("".join(final_text), tool_results)
+
+        def mcp_send_on_complete(future):
+            try:
+                result = future.result()
+                if result:
+                    (assistant_text, tool_results) = result
+                    logger.debug(f"mcp_send response {assistant_text}")
+                    logger.debug(f"mcp_send tool result {tool_results}")
+                    self.nvim.async_call(
+                        lambda: [
+                            self._add_message("assistant", assistant_text),
+                            self._add_tool_result({"role": "user", "content": tool_results}),
+                            self._focus_chat_window(),
+                        ]
+                    )
+            except Exception as e:
+                logger.error(f"Error in message processing: {e}")
+
+        future = asyncio.run_coroutine_threadsafe(mcp_send(), self.nvim.loop)
+        future.add_done_callback(mcp_send_on_complete)
+
+    def _add_tool_result(self, tool_result: dict | None):
+        if tool_result and len(tool_result.get("content", [])) > 0:
+            self.messages.append(tool_result)
+            self._save_current_conversation()
+            self._update_chat_display()
 
     def _add_message(self, role: str, content: str):
         """Add a message and save the conversation."""
@@ -290,43 +368,47 @@ class ChatInterface:
         self._save_current_conversation()
         self._update_chat_display()
 
+    def _focus_chat_window(self):
+        self.nvim.command("RenderMarkdown enable")
+        self.nvim.current.window = self.chat_win
+
     def send_message_stream(self):
+        message = self._get_input_buf_contents()
+        if not message:
+            return
+
         if self.current_conversation_id is None:
             self._start_new_conversation()
 
-        message = self._get_input_buf_contents()
-        if message:
-            self.input_buf[:] = [""]
-            self.nvim.command("RenderMarkdown disable")
+        self.input_buf[:] = [""]
+        self.nvim.command("RenderMarkdown disable")
 
-            # Get system prompt
-            system_prompt = self._get_system_prompt_with_context()
+        # Get system prompt
+        system_prompt = self._get_system_prompt_with_context()
 
-            # Add user message to display messages
-            self._add_message("user", message)
+        # Add user message to display messages
+        self._add_message("user", message)
 
-            # Get response using display messages but excluding system messages
-            display_messages = [msg for msg in self.messages if msg["role"] != "system"]
-            event_stream = self.llm_provider.complete_stream(messages=display_messages, system_prompt=system_prompt)
+        # Get response using display messages but excluding system messages
+        display_messages = [msg for msg in self.messages if msg["role"] != "system"]
+        event_stream = self.llm_provider.complete_stream(messages=display_messages, system_prompt=system_prompt)
 
-            assistant_content = ""
-            for event in event_stream:
-                if self.messages[-1].get("role", "") == "user":
-                    self.messages.append({"role": "assistant", "content": ""})
+        assistant_content = ""
+        for event in event_stream:
+            if self.messages[-1].get("role", "") == "user":
+                self.messages.append({"role": "assistant", "content": ""})
 
-                assistant_content += event
-                self.messages[-1]["content"] = assistant_content
-                if self.chat_buf and self.chat_buf.valid and self.chat_win and self.chat_win.valid:
-                    self._update_chat_display()
+            assistant_content += event
+            self.messages[-1]["content"] = assistant_content
+            if self.chat_buf and self.chat_buf.valid and self.chat_win and self.chat_win.valid:
+                self._update_chat_display()
 
-            # Save the complete conversation
-            if self.current_conversation_id:
-                storage_messages = [{"role": "system", "content": system_prompt}] + self.messages
-                self.storage.save_conversation(self.current_conversation_id, storage_messages)
+        # Save the complete conversation
+        if self.current_conversation_id:
+            storage_messages = [{"role": "system", "content": system_prompt}] + self.messages
+            self.storage.save_conversation(self.current_conversation_id, storage_messages)
 
-        self.nvim.command("RenderMarkdown enable")
-        if self.chat_win and self.chat_win.valid:
-            self.nvim.current.window = self.chat_win
+        self._focus_chat_window()
 
     def load_conversation(self, conversation_id: str):
         """Load a specific conversation."""
