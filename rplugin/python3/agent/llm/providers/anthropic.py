@@ -9,14 +9,13 @@ from ..constants import BASE_SYSTEM_PROMPT, CLAUDE_SONNET, MAX_TOKENS, TEMPERATU
 
 
 class AnthropicProvider(LLMProvider):
-    def __init__(self, nvim):
-        self.nvim = nvim
+    def __init__(self):
         self.client = self._get_client()
 
     def _get_client(self):
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
-            self.nvim.err_write("Warning: Anthropic API key not configured\n")
+            raise ValueError("Anthropic API key not provided")
         return Anthropic(api_key=api_key)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
@@ -34,8 +33,7 @@ class AnthropicProvider(LLMProvider):
             )
             return response.content[0].text
         except Exception as e:
-            self.nvim.err_write(f"Anthropic API error: {str(e)}\n")
-            raise
+            raise e
 
     def complete_stream(
         self, *, messages: List[Dict], model: Optional[str] = CLAUDE_SONNET, system_prompt: str = BASE_SYSTEM_PROMPT
@@ -58,5 +56,4 @@ class AnthropicProvider(LLMProvider):
                     yield chunk.delta.text
 
         except Exception as e:
-            self.nvim.err_write(f"Anthropic streaming API error: {str(e)}\n")
-            raise
+            raise e

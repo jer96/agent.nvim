@@ -14,9 +14,9 @@ class ModelProvider(Enum):
 
 
 class LLMProviderFactory:
-    _providers: Dict[ModelProvider, Callable[[pynvim.Nvim], LLMProvider]] = {
-        ModelProvider.ANTHROPIC: lambda nvim: AnthropicProvider(nvim),
-        ModelProvider.BEDROCK: lambda nvim: BedrockProvider(nvim),
+    _providers: Dict[ModelProvider, Callable[[], LLMProvider]] = {
+        ModelProvider.ANTHROPIC: lambda: AnthropicProvider(),
+        ModelProvider.BEDROCK: lambda: BedrockProvider(),
     }
 
     @classmethod
@@ -36,4 +36,4 @@ class LLMProviderFactory:
 
         provider_creator = cls._providers.get(model_provider)
 
-        return provider_creator(nvim)
+        return provider_creator()

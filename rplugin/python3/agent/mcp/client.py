@@ -5,6 +5,8 @@ from typing import Optional
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from ..llm.providers.anthropic import AnthropicProvider
+
 logger = logging.getLogger(__name__)
 
 server_params = StdioServerParameters(
@@ -19,6 +21,7 @@ class MCPClient:
     def __init__(self):
         self.session: Optional[ClientSession] = None
         self.exit_stack = AsyncExitStack()
+        self.anthropic = AnthropicProvider()
 
     async def connect_to_server(self):
         stdio_transport = await self.exit_stack.enter_async_context(stdio_client(server_params))
@@ -30,11 +33,6 @@ class MCPClient:
         logger.debug("session info")
         session_info = await self.get_session_info()
         logger.debug(session_info)
-
-        # List available tools
-        # response = await self.session.list_tools()
-        # tools = response.tools
-        # logger.debug("Connected to server with tools: %s", [tool.name for tool in tools])
         return self.session
 
     async def get_session_info(self):

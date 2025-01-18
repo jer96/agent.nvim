@@ -9,8 +9,7 @@ from ..constants import BASE_SYSTEM_PROMPT, BEDROCK_CLAUDE, MAX_TOKENS, TEMPERAT
 
 
 class BedrockProvider(LLMProvider):
-    def __init__(self, nvim):
-        self.nvim = nvim
+    def __init__(self):
         self.client = self._get_client()
 
     def _get_client(self):
@@ -34,8 +33,7 @@ class BedrockProvider(LLMProvider):
             response_body = json.loads(response["body"].read())
             return response_body["content"][0]["text"]
         except Exception as e:
-            self.nvim.err_write(f"Bedrock API error: {str(e)}\n")
-            raise
+            raise e
 
     def complete_stream(
         self, *, messages: List[Dict], model: Optional[str] = BEDROCK_CLAUDE, system_prompt: str = BASE_SYSTEM_PROMPT
@@ -60,5 +58,4 @@ class BedrockProvider(LLMProvider):
                         yield chunk["delta"]["text"]
 
         except Exception as e:
-            self.nvim.err_write(f"Bedrock streaming API error: {str(e)}\n")
-            raise
+            raise e
