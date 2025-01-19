@@ -53,54 +53,6 @@ class ChatInterface:
 
         asyncio.run_coroutine_threadsafe(initialize_mcp(), self.nvim.loop)
 
-    def test_mcp_client(self):
-        if not self.mcp_client or not self.mcp_client.session:
-            logger.debug("MCP client not connected. Run :AgentMCPStart first")
-            return
-
-        async def run_test():
-            try:
-                logger.debug("-- run test start --")
-                # Get session
-                session = self.mcp_client.session
-
-                # List available prompts
-                prompts = await session.list_prompts()
-                logger.debug(prompts)
-
-                # Get a prompt
-                prompt = await session.get_prompt("echo_prompt", arguments={"message": "hey"})
-                logger.debug(prompt)
-
-                # List available resources
-                resources = await session.list_resources()
-                logger.debug(resources)
-
-                # List available tools
-                tools = await session.list_tools()
-                logger.debug(tools)
-
-                # Read a resource
-                resource = await session.read_resource("echo://hey")
-                logger.debug(resource)
-
-                # List available tools
-                tools_response = await session.list_tools()
-                logger.debug("Available tools:")
-                for tool in tools_response.tools:
-                    logger.debug(f"- {tool.name}: {tool.description}")
-
-                # Try calling echo_tool if available
-                if any(tool.name == "echo_tool" for tool in tools_response.tools):
-                    result = await session.call_tool("echo_tool", {"message": "MCP test successful!"})
-                    logger.debug(f"Test tool call result: {result.content}")
-
-                logger.debug("-- run test end --")
-            except Exception as e:
-                logger.error("MCP test error", e)
-
-        asyncio.run_coroutine_threadsafe(run_test(), self.nvim.loop)
-
     def _start_new_conversation(self):
         """Start a new conversation with a unique ID and initial system prompt."""
         self.current_conversation_id = str(uuid.uuid4())

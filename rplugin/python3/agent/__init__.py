@@ -111,18 +111,3 @@ class AgentPlugin:
                 self.nvim.err_write(f"Conversation {conv_id} not found\n")
         except Exception as e:
             self.nvim.err_write(f"Error loading conversation: {str(e)}\n")
-
-    @pynvim.command("AgentMCPStart", sync=True)
-    def start_mcp(self):
-        """Start MCP client with given server script path"""
-        self.chat_interface.start_mcp_client()
-
-    @pynvim.command("AgentMCPStop", sync=True)
-    def stop_mcp(self):
-        """Stop MCP client and cleanup"""
-        self.chat_interface.stop_mcp_client()
-
-    @pynvim.command("AgentMCPTest", sync=True)
-    def test_mcp(self):
-        """Test MCP connection and available tools"""
-        self.chat_interface.test_mcp_client()
