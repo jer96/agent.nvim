@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import uuid
-from typing import Optional
+from typing import List, Optional
 
 import pynvim
 
@@ -223,34 +223,53 @@ class ChatInterface:
         window_width = self.nvim.api.win_get_width(self.chat_win)
         display_lines = [""]
         for msg in self.messages:
-            role = msg["role"].upper()
-            heading = "#" if role == "USER" else "##"
-            padding = " " * ((window_width - len(role) - len(heading)) // 2)
-            role_header = f"{heading}{padding}{role}{padding}"
 
-            display_lines.append("---")
-            display_lines.append(role_header)
-            display_lines.append("---")
-            display_lines.append("")
+            def display_heading(role: str):
+                heading_map = {"user": "#", "assistant": "##", "tool use": "###", "tool result": "###"}
+                heading = heading_map.get(role, "#")
+                role = role.upper()
+                padding = " " * ((window_width - len(role) - len(heading)) // 2)
+                role_header = f"{heading}{padding}{role}{padding}"
 
-            content = msg["content"]
-            if isinstance(content, str):
-                wrapped_content = msg["content"].split("\n")
+                display_lines.append("---")
+                display_lines.append(role_header)
+                display_lines.append("---")
+                display_lines.append("")
+
+            def display_wrapped_string(string: str):
+                wrapped_content = string.split("\n")
                 for line in wrapped_content:
                     display_lines.append(line)
                 display_lines.append("")
+
+            content = msg["content"]
+            if isinstance(content, str):
+                display_heading(msg["role"])
+                display_wrapped_string(msg["content"])
             elif isinstance(content, list):
-                for con in content:
-                    logger.debug(con)
-                    if con.get("type", "") == "tool_result":
-                        tool_content = con.get("content", [])
-                        for tool_con in tool_content:
-                            if tool_con.get("type", "") == "text":
-                                wrapped_content = tool_con.get("text", "").split("\n")
-                                display_lines.append("Tool Results")
-                                for line in wrapped_content:
-                                    display_lines.append(line)
-                                display_lines.append("")
+                for obj in content:
+                    if obj.get("type", "") == "tool_use":
+                        display_heading("tool use")
+                        tool_name = obj.get("name", "")
+                        tool_input = obj.get("input", {})
+                        tool_id = obj.get("id", "")
+                        display_lines.append(f"Tool name: {tool_name}")
+                        display_lines.append(f"Tool input: {tool_input}")
+                        display_lines.append(f"Tool id: {tool_id}")
+                        display_lines.append("")
+                    elif obj.get("type", "") == "tool_result":
+                        display_heading("tool result")
+                        tool_content = obj.get("content", "")
+                        tool_use_id = obj.get("tool_use_id", "")
+                        is_error = obj.get("is_error", False)
+                        display_lines.append(f"Tool use id: {tool_use_id}")
+                        display_lines.append(f"Tool error: {is_error}")
+                        display_lines.append("Tool content:")
+                        display_wrapped_string(tool_content)
+                    elif obj.get("type", "") == "text":
+                        text = obj.get("text", "")
+                        display_heading(msg["role"])
+                        display_wrapped_string(text)
 
         self.chat_buf.options["modifiable"] = True
         self.chat_buf[:] = display_lines
@@ -258,7 +277,6 @@ class ChatInterface:
 
         # Scroll to bottom
         self.chat_win.cursor = (len(display_lines), 0)
-        logger.debug(self.messages)
 
     def _get_input_buf_contents(self) -> Optional[str]:
         if not self.input_buf or not self.input_buf.valid:
@@ -287,80 +305,70 @@ class ChatInterface:
         return f"{BASE_SYSTEM_PROMPT} {FILE_CONTEXT_SYSTEM_PROMPT.replace("{{FILES}}", files_content)}"
 
     def send_message(self):
+        if self.current_conversation_id is None:
+            self._start_new_conversation()
+
         message = self._get_input_buf_contents()
         if not message:
             return
-
-        if self.current_conversation_id is None:
-            self._start_new_conversation()
 
         self.input_buf[:] = [""]
         self._add_message("user", message)
         system_prompt = self._get_system_prompt_with_context()
 
         async def mcp_send():
-            tools = await self.mcp_client.session.list_tools()
-            available_tools = [
-                {"name": tool.name, "description": tool.description, "input_schema": tool.inputSchema}
-                for tool in tools.tools
-            ]
-
-            logger.debug(f"mcp tools {available_tools} ")
+            available_tools = await self.mcp_client.get_available_tools()
             response_content = self.llm_provider.complete(
                 messages=self.messages, tools=available_tools, system_prompt=system_prompt
             )
 
-            final_text = []
             tool_results = []
+            assistant_content = []
             for content in response_content:
                 if content.type == "text":
-                    final_text.append(content.text)
+                    assistant_content.append({"type": "text", "text": content.text})
                 elif content.type == "tool_use":
                     tool_name = content.name
-                    tool_args = content.input
+                    tool_input = content.input
                     tool_id = content.id
-                    logger.debug("--- start tool ---")
-                    logger.debug(tool_name)
-                    logger.debug(tool_args)
-                    logger.debug(tool_id)
-                    result = await self.mcp_client.session.call_tool(tool_name, tool_args)
-                    tool_result = {}
-                    tool_result["type"] = "tool_result"
-                    tool_result["tool_use_id"] = tool_id
-                    tool_result["content"] = []
-                    for content in result.content:
-                        if content.type == "text":
-                            tool_result["content"].append({"type": content.type, "text": content.text})
-                    tool_results.append(tool_result)
-                    logger.debug("--- end tool ---")
+                    assistant_content.append(
+                        {"type": "tool_use", "id": tool_id, "name": tool_name, "input": tool_input}
+                    )
+                    results = await self.mcp_client.call_tool(tool_name, tool_id, tool_input)
+                    tool_results.append(*results)
 
-            return ("".join(final_text), tool_results)
+            return (assistant_content, tool_results)
 
         def mcp_send_on_complete(future):
             try:
                 result = future.result()
                 if result:
-                    (assistant_text, tool_results) = result
-                    logger.debug(f"mcp_send response {assistant_text}")
+                    (assistant_content, tool_results) = result
+                    logger.debug(f"mcp_send response {assistant_content}")
                     logger.debug(f"mcp_send tool result {tool_results}")
-                    self.nvim.async_call(
-                        lambda: [
-                            self._add_message("assistant", assistant_text),
-                            self._add_tool_result({"role": "user", "content": tool_results}),
-                            self._focus_chat_window(),
-                        ]
-                    )
+                    messages = [
+                        {"role": "assistant", "content": assistant_content},
+                        {"role": "user", "content": tool_results},
+                    ]
+                    if tool_results:
+                        self.nvim.async_call(
+                            lambda: [self._add_messages(messages), self._focus_chat_window(), self.send_message()]
+                        )
+                    else:
+                        self.nvim.async_call(lambda: [self._add_messages(messages), self._focus_chat_window()])
             except Exception as e:
                 logger.error(f"Error in message processing: {e}")
 
         future = asyncio.run_coroutine_threadsafe(mcp_send(), self.nvim.loop)
         future.add_done_callback(mcp_send_on_complete)
 
-    def _add_tool_result(self, tool_result: dict | None):
-        if tool_result and len(tool_result.get("content", [])) > 0:
-            self.messages.append(tool_result)
-            self._save_current_conversation()
-            self._update_chat_display()
+    def _add_messages(self, messages: List[dict]):
+        for message in messages:
+            if "content" in message and len(message.get("content", [])) == 0:
+                continue
+            self.messages.append(message)
+        self._save_current_conversation()
+        self._update_chat_display()
 
     def _add_message(self, role: str, content: str):
         """Add a message and save the conversation."""
@@ -373,12 +381,12 @@ class ChatInterface:
         self.nvim.current.window = self.chat_win
 
     def send_message_stream(self):
+        if self.current_conversation_id is None:
+            self._start_new_conversation()
+
         message = self._get_input_buf_contents()
         if not message:
             return
-
-        if self.current_conversation_id is None:
-            self._start_new_conversation()
 
         self.input_buf[:] = [""]
         self.nvim.command("RenderMarkdown disable")

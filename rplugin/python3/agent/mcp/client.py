@@ -1,6 +1,6 @@
 import logging
 from contextlib import AsyncExitStack
-from typing import Optional
+from typing import List, Optional
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -61,3 +61,24 @@ class MCPClient:
     async def cleanup(self):
         """Clean up resources"""
         await self.exit_stack.aclose()
+
+    async def get_available_tools(self) -> List[dict]:
+        tools = await self.session.list_tools()
+        logger.debug(f"mcp tools {tools} ")
+        return [
+            {"name": tool.name, "description": tool.description, "input_schema": tool.inputSchema}
+            for tool in tools.tools
+        ]
+
+    async def call_tool(self, tool_name: str, tool_id: str, tool_input: dict) -> List[dict]:
+        logger.debug(tool_name)
+        logger.debug(tool_input)
+        logger.debug(tool_id)
+        result = await self.session.call_tool(tool_name, tool_input)
+        tool_results = []
+        for content in result.content:
+            if content.type == "text":
+                tool_results.append(
+                    {"type": "tool_result", "tool_use_id": tool_id, "content": content.text, "is_error": result.isError}
+                )
+        return tool_results
