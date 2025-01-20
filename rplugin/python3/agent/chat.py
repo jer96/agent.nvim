@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import uuid
 from typing import List, Optional
@@ -47,7 +48,7 @@ class ChatInterface:
         async def initialize_mcp():
             try:
                 self.mcp_client = MCPClient()
-                await self.mcp_client.connect_to_server()
+                await self.mcp_client.connect_to_servers()
             except Exception as e:
                 self.nvim.err_write(f"Error initializing MCP client: {str(e)}\n")
 
@@ -183,9 +184,12 @@ class ChatInterface:
                 padding = " " * ((window_width - len(role) - len(heading)) // 2)
                 role_header = f"{heading}{padding}{role}{padding}"
 
-                display_lines.append("---")
-                display_lines.append(role_header)
-                display_lines.append("---")
+                if role in ["USER", "ASSISTANT"]:
+                    display_lines.append("---")
+                    display_lines.append(role_header)
+                    display_lines.append("---")
+                else:
+                    display_lines.append(f"{heading} {role}")
                 display_lines.append("")
 
             def display_wrapped_string(string: str):
@@ -204,19 +208,19 @@ class ChatInterface:
                         display_heading("tool use")
                         tool_name = obj.get("name", "")
                         tool_input = obj.get("input", {})
-                        tool_id = obj.get("id", "")
-                        display_lines.append(f"Tool name: {tool_name}")
-                        display_lines.append(f"Tool input: {tool_input}")
-                        display_lines.append(f"Tool id: {tool_id}")
+                        display_lines.append(f"Name: `{tool_name}`")
+                        formatted_input = json.dumps(tool_input, indent=2)
+                        display_lines.append("Input:")
+                        display_lines.append("```")
+                        display_lines.extend(formatted_input.splitlines())
+                        display_lines.append("```")
                         display_lines.append("")
-                    elif obj.get("type", "") == "tool_result":
+                    if obj.get("type", "") == "tool_result":
                         display_heading("tool result")
                         tool_content = obj.get("content", "")
-                        tool_use_id = obj.get("tool_use_id", "")
                         is_error = obj.get("is_error", False)
-                        display_lines.append(f"Tool use id: {tool_use_id}")
-                        display_lines.append(f"Tool error: {is_error}")
-                        display_lines.append("Tool content:")
+                        display_lines.append(f"> Error: {is_error}")
+                        display_lines.append("")
                         display_wrapped_string(tool_content)
                     elif obj.get("type", "") == "text":
                         text = obj.get("text", "")
@@ -261,11 +265,9 @@ class ChatInterface:
             self._start_new_conversation()
 
         message = self._get_input_buf_contents()
-        if not message:
-            return
-
-        self.input_buf[:] = [""]
-        self._add_message("user", message)
+        if message and message.strip():
+            self.input_buf[:] = [""]
+            self._add_message("user", message)
         system_prompt = self._get_system_prompt_with_context()
 
         async def mcp_send():
