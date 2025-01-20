@@ -8,13 +8,12 @@ import pynvim
 
 from .context import AgentContext
 from .llm.constants import (
-    BASE_SYSTEM_PROMPT,
-    FILE_CONTEXT_SYSTEM_PROMPT,
+    SYSTEM_PROMPT,
     create_file_prompt_from_buf,
     create_file_prompt_from_file,
 )
 from .llm.factory import LLMProviderFactory
-from .mcp import MCPClient
+from .mcp import MCPClient, get_file_system_server_params
 from .storage import ConversationStorage
 
 logger = logging.getLogger(__name__)
@@ -23,15 +22,16 @@ logger = logging.getLogger(__name__)
 class ChatInterface:
     def __init__(self, nvim: pynvim.Nvim, context: AgentContext):
         self.nvim = nvim
+        self.context = context
+        self.is_active = False
         self.messages = []
+        self.cwd = self.nvim.call("getcwd")
         self.chat_win = None
         self.chat_buf = None
         self.input_win = None
         self.input_buf = None
         self.current_conversation_id = None
         self.mcp_client = None
-        self.context = context
-        self.is_active = False
         self.llm_provider = LLMProviderFactory.create(self.nvim)
         self.storage = ConversationStorage(self.nvim)
         self.start_mcp_client()
@@ -44,10 +44,15 @@ class ChatInterface:
 
         asyncio.run_coroutine_threadsafe(cleanup_mcp(), self.nvim.loop)
 
+    def _get_mcp_server_params(self):
+        file_system_server_params = get_file_system_server_params([self.cwd])
+        return [file_system_server_params]
+
     def start_mcp_client(self):
         async def initialize_mcp():
             try:
-                self.mcp_client = MCPClient()
+                server_params = self._get_mcp_server_params()
+                self.mcp_client = MCPClient(server_params)
                 await self.mcp_client.connect_to_servers()
             except Exception as e:
                 self.nvim.err_write(f"Error initializing MCP client: {str(e)}\n")
@@ -253,12 +258,9 @@ class ChatInterface:
         ]
 
         all_file_contexts = buf_contexts + file_contexts
+        files_content = "".join(all_file_contexts) if all_file_contexts else ""
 
-        if not all_file_contexts:
-            return BASE_SYSTEM_PROMPT
-
-        files_content = "".join(all_file_contexts)
-        return f"{BASE_SYSTEM_PROMPT} {FILE_CONTEXT_SYSTEM_PROMPT.replace("{{FILES}}", files_content)}"
+        return SYSTEM_PROMPT.replace("{{FILES}}", files_content).replace("{{CWD}}", self.cwd)
 
     def send_message(self):
         if self.current_conversation_id is None:

@@ -9,17 +9,10 @@ from ..llm.providers.anthropic import AnthropicProvider
 
 logger = logging.getLogger(__name__)
 
-FILE_SYSTEM_SERVER_PARAMS = StdioServerParameters(
-    command="npx",
-    args=["-y", "@modelcontextprotocol/server-filesystem", "/Users/jeremiahbill/nvim-plugins/agent.nvim"],
-)
-
-DEFAULT_MCP_SERVERS = [FILE_SYSTEM_SERVER_PARAMS]
-
 
 class MCPClient:
-    def __init__(self, server_params_list: List[StdioServerParameters] = DEFAULT_MCP_SERVERS):
-        self.server_params_list = server_params_list
+    def __init__(self, server_params: List[StdioServerParameters]):
+        self.server_params_list = server_params
         self.sessions = {}  # server_id -> session
         self.tool_to_server = {}  # tool_name -> server_id
         self.exit_stack = AsyncExitStack()
