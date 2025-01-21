@@ -32,7 +32,7 @@ class AgentPlugin:
 
     @pynvim.function("AgentSendStream")
     def send_message_stream(self, args: List[str]):
-        self.chat_interface.send_message_stream()
+        self.nvim.async_call(self.chat_interface.send_message_stream)
 
     @pynvim.function("AgentClose", sync=True)
     def close_chat(self, args: List[str]):

@@ -6,6 +6,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from ..llm.providers.anthropic import AnthropicProvider
+from ..llm.types import TextToolResult, Tool, ToolCall, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -67,21 +68,24 @@ class MCPClient:
 
         return all_sessions_info
 
-    async def get_available_tools(self) -> List[dict]:
+    async def get_available_tools(self) -> List[Tool]:
         """Get all tools from all servers"""
         all_tools = []
         for session in self.sessions.values():
             tools = await session.list_tools()
             all_tools.extend(
                 [
-                    {"name": tool.name, "description": tool.description, "input_schema": tool.inputSchema}
+                    Tool(name=tool.name, description=tool.description, input_schema=tool.inputSchema)
                     for tool in tools.tools
                 ]
             )
         return all_tools
 
-    async def call_tool(self, tool_name: str, tool_id: str, tool_input: dict) -> List[dict]:
+    async def call_tool(self, tool_call: ToolCall) -> List[ToolResult]:
         # Find the correct server for this tool
+        tool_name = tool_call.name
+        tool_input = tool_call.input
+        tool_id = tool_call.id
         server_id = self.tool_to_server.get(tool_name)
         if not server_id:
             logger.error(f"No server found for tool: {tool_name}")
@@ -94,14 +98,7 @@ class MCPClient:
         tool_results = []
         for content in result.content:
             if content.type == "text":
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": tool_id,
-                        "content": content.text,
-                        "is_error": result.isError,
-                    }
-                )
+                tool_results.append(TextToolResult(tool_use_id=tool_id, content=content.text, is_error=result.isError))
         return tool_results
 
     async def cleanup(self):
