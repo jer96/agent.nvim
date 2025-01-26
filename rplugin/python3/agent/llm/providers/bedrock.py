@@ -1,12 +1,12 @@
 import json
 import logging
-from typing import Generator, List
+from typing import AsyncGenerator, Generator, List
 
 import boto3
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ..base import LLMProvider
-from ..constants import ANTHROPIC_VERSION, BEDROCK_CLAUDE, US_EAST_1
+from ..constants import BEDROCK_ANTHROPIC_VERSION, BEDROCK_CLAUDE, US_EAST_1
 from ..types import CompletionResponse, ContentType, InferenceConfig, Message, TextContent, Tool
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ class BedrockProvider(LLMProvider):
             raise ValueError("Bedrock client not configured")
 
         request_body = {
-            "anthropic_version": ANTHROPIC_VERSION,
+            "anthropic_version": BEDROCK_ANTHROPIC_VERSION,
             "max_tokens": config.max_tokens,
             "temperature": config.temperature,
             "system": config.system_prompt,
@@ -85,3 +85,23 @@ class BedrockProvider(LLMProvider):
 
         except Exception as e:
             raise e
+
+    async def async_complete(
+        self,
+        *,
+        messages: List[Message],
+        tools: List[Tool],
+        config: InferenceConfig | None,
+    ) -> CompletionResponse:
+        """Async version of complete that reuses the sync implementation"""
+        return self.complete(messages=messages, tools=tools, config=config)
+
+    async def async_complete_stream(
+        self,
+        *,
+        messages: List[Message],
+        config: InferenceConfig | None,
+    ) -> AsyncGenerator[str, None]:
+        """Async version of complete_stream that reuses the sync implementation"""
+        for chunk in self.complete_stream(messages=messages, config=config):
+            yield chunk

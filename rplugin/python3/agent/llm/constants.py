@@ -1,9 +1,20 @@
-ANTHROPIC_VERSION = "bedrock-2023-05-31"
+BEDROCK_ANTHROPIC_VERSION = "bedrock-2023-05-31"
 CLAUDE_SONNET = "claude-3-5-sonnet-latest"
 BEDROCK_CLAUDE = "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
 US_EAST_1 = "us-east-1"
 MAX_TOKENS = 4096
 TEMPERATURE = 0.7
+FILE_TREE_IGNORE_PATTERNS = [
+    ".git",
+    "__pycache__",
+    "node_modules",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".venv",
+    "venv",
+    ".DS_Store",
+    ".egg-info",
+]
 FILE_CONTEXT_PROMPT = """
 ================================================
 File: {{FILE}}
@@ -17,20 +28,25 @@ SYSTEM_PROMPT = """You are an AI assistant embedded into the Neovim text editor.
 
 Here is the crucial information about your editing environment:
 
-<context_files>
-{{FILES}}
-</context_files>
-
 <current_working_directory>
 {{CWD}}
 </current_working_directory>
 
+<directory_structure>
+{{DIRECTORY_TREE}}
+</directory_structure>
+
+<context_files>
+{{FILES}}
+</context_files>
+
 When responding to user queries, follow these steps:
 
 1. Analyze the context:
+   - Consider the current working directory provided in the <current_working_directory> section.
+   - Review the directory structure provided in the <directory_structure> section to understand the project layout.
    - Review the files provided in the <context_files> section.
    - Identify which file is currently active (open in the editor).
-   - Consider the current working directory provided in the <current_working_directory> section.
    - Determine if the query is related to the editing context or if it's a general question.
 
 2. Process the user's query:

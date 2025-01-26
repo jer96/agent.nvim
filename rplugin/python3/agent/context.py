@@ -1,8 +1,11 @@
 import logging
+import os
 from typing import Dict, List
 
 import pynvim
 from pynvim.api import Buffer
+
+from .llm.constants import FILE_TREE_IGNORE_PATTERNS
 
 IGNORED_BUF_FILE_TYPES = {"alpha", "unkown", "NvimTree", "TelescopePrompt", "TelescopeResult", "agent.nvim"}
 IGNORED_BUF_PATTERNS = {"agent chat"}
@@ -83,3 +86,49 @@ class AgentContext:
         if buf_number in self.active_buffers:
             ctx_buf = self.active_buffers[buf_number]
             ctx_buf.is_active = not ctx_buf.is_active
+
+    def get_directory_tree(
+        self,
+        max_depth: int = 3,
+        include_hidden: bool = False,
+    ) -> str:
+        """Generate a tree representation of the directory structure."""
+
+        def should_include(entry: str, path: str) -> bool:
+            # Skip hidden files unless explicitly enabled
+            if not include_hidden and entry.startswith("."):
+                return False
+
+            # Skip ignored patterns
+            if any(pattern in path for pattern in FILE_TREE_IGNORE_PATTERNS):
+                return False
+
+            return True
+
+        def build_tree(directory: str, prefix: str = "", current_depth: int = 0) -> str:
+            if current_depth > max_depth:
+                return ""
+
+            tree = ""
+            try:
+                entries = os.listdir(directory)
+                # Filter and sort entries
+                entries = [e for e in sorted(entries) if should_include(e, os.path.join(directory, e))]
+
+                for i, entry in enumerate(entries):
+                    path = os.path.join(directory, entry)
+                    is_last = i == len(entries) - 1
+                    current_prefix = "└── " if is_last else "├── "
+
+                    tree += f"{prefix}{current_prefix}{entry}\n"
+
+                    if os.path.isdir(path):
+                        next_prefix = prefix + ("    " if is_last else "│   ")
+                        tree += build_tree(path, next_prefix, current_depth + 1)
+            except (PermissionError, FileNotFoundError):
+                pass
+
+            return tree
+
+        tree = build_tree(self.cwd)
+        return tree if tree else ""

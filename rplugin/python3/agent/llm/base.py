@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Generator, List
+from typing import AsyncGenerator, Generator, List
 
 from .types import (
     CompletionResponse,
@@ -49,4 +49,25 @@ class LLMProvider(ABC):
         Returns:
             A generator yielding stream response chunks
         """
+        pass
+
+    @abstractmethod
+    async def async_complete(
+        self,
+        *,
+        messages: List[Message],
+        tools: List[Tool],
+        config: InferenceConfig | None,
+    ) -> CompletionResponse:
+        """Async version of complete"""
+        pass
+
+    @abstractmethod
+    async def async_complete_stream(
+        self,
+        *,
+        messages: List[Message],
+        config: InferenceConfig | None,
+    ) -> AsyncGenerator[StreamResponse, None]:
+        """Async version of complete_stream"""
         pass

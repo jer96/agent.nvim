@@ -80,6 +80,7 @@ class ChatInterface:
 
     def _get_system_prompt_with_context(self):
         """Get system prompt with current buffer and file contexts."""
+        # Get buffer and file contexts
         active_bufs = self.context.get_active_buffers()
         buf_contexts = [create_file_prompt_from_buf(buf) for buf in active_bufs]
 
@@ -90,8 +91,13 @@ class ChatInterface:
 
         all_file_contexts = buf_contexts + file_contexts
         files_content = "".join(all_file_contexts) if all_file_contexts else ""
+        directory_tree = self.context.get_directory_tree()
 
-        return SYSTEM_PROMPT.replace("{{FILES}}", files_content).replace("{{CWD}}", self.context.cwd)
+        return (
+            SYSTEM_PROMPT.replace("{{FILES}}", files_content)
+            .replace("{{CWD}}", self.context.cwd)
+            .replace("{{DIRECTORY_TREE}}", directory_tree)
+        )
 
     def _add_messages(self, messages: List[Message]):
         """Add messages to the conversation and update display."""
@@ -112,7 +118,7 @@ class ChatInterface:
         async def mcp_send() -> List[Message]:
             tools = await self.mcp_client.get_available_tools()
             config = InferenceConfig(system_prompt=system_prompt)
-            response: CompletionResponse = self.llm_provider.complete(
+            response: CompletionResponse = await self.llm_provider.async_complete(
                 messages=self.messages, tools=tools, config=config
             )
 
