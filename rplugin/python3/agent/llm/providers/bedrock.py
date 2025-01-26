@@ -47,7 +47,6 @@ class BedrockProvider(LLMProvider):
             "messages": [msg.model_dump() for msg in messages],
         }
         logger.debug("bedrock completion")
-        logger.debug(self._convert_tools_to_bedrock_format(tools))
 
         try:
             model_id = config.model or BEDROCK_CLAUDE

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import AsyncExitStack
 from typing import List
@@ -12,12 +13,31 @@ logger = logging.getLogger(__name__)
 
 
 class MCPClient:
-    def __init__(self, server_params: List[StdioServerParameters]):
+    def __init__(self, server_params: List[StdioServerParameters], event_loop: asyncio.AbstractEventLoop):
         self.server_params_list = server_params
         self.sessions = {}  # server_id -> session
         self.tool_to_server = {}  # tool_name -> server_id
         self.exit_stack = AsyncExitStack()
         self.anthropic = AnthropicProvider()
+        self.event_loop = event_loop
+
+    def stop(self):
+        async def cleanup_mcp():
+            try:
+                await self.cleanup()
+            except Exception as e:
+                self.nvim.err_write(f"Error cleaning up MCP client: {str(e)}\n")
+
+        asyncio.run_coroutine_threadsafe(cleanup_mcp(), self.event_loop)
+
+    def start(self):
+        async def initialize_mcp():
+            try:
+                await self.connect_to_servers()
+            except Exception as e:
+                self.nvim.err_write(f"Error initializing MCP client: {str(e)}\n")
+
+        asyncio.run_coroutine_threadsafe(initialize_mcp(), self.event_loop)
 
     async def _connect_to_server(self, server_id: str, params: StdioServerParameters):
         stdio_transport = await self.exit_stack.enter_async_context(stdio_client(params))

@@ -34,9 +34,8 @@ class LLMProviderFactory:
             else:
                 model_provider = ModelProvider.ANTHROPIC
 
-        provider_creator = cls._providers.get(model_provider)
-        if not provider_creator:
+        provider_constructor = cls._providers.get(model_provider)
+        if not provider_constructor:
             raise ValueError(f"Unknown model provider: {model_provider}")
 
-        return provider_creator()
-
+        return provider_constructor()

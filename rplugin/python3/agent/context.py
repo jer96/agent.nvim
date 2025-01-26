@@ -24,6 +24,10 @@ class AgentContext:
         self.additional_files: List[str] = []
         self._refresh_active_buffers()
 
+    @property
+    def cwd(self) -> str:
+        return self.nvim.call("getcwd")
+
     def _refresh_active_buffers(self):
         for buf in self.nvim.buffers:
             if buf.valid and buf.name and not self._is_ignored_buffer(buf):

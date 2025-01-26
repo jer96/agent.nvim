@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any, Dict, List, Literal, Union
 
 from pydantic import BaseModel, Field
@@ -74,3 +75,19 @@ class Message(BaseModel):
 
     role: MessageRole
     content: Union[ContentType, List[ContentType]]
+
+
+class Conversation(BaseModel):
+    """Model representing a stored conversation."""
+
+    id: str
+    timestamp: datetime
+    messages: List[Message]
+
+
+class ConversationMetadata(BaseModel):
+    """Model for conversation listing."""
+
+    id: str
+    timestamp: datetime
+    message_count: int

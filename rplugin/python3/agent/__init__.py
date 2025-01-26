@@ -83,9 +83,9 @@ class AgentPlugin:
         conversations = self.chat_interface.storage.list_conversations()
         return [
             {
-                "id": conv["id"],
-                "timestamp": datetime.fromisoformat(conv["timestamp"]).strftime("%Y-%m-%d %H:%M:%S"),
-                "message_count": conv["message_count"],
+                "id": conv.id,
+                "timestamp": conv.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                "message_count": conv.message_count,
             }
             for conv in conversations
         ]
