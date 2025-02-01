@@ -200,6 +200,7 @@ class ChatInterface:
                     results = await self.mcp_client.call_tool(event)
                     tool_results.append(*results)
                 self.nvim.async_call(self.view.update_display, self.messages)
+            asyncio.sleep(1)
             self.nvim.async_call(self.view.end_streaming)
             return self.finalize_messages(assistant_content, tool_results)
 
