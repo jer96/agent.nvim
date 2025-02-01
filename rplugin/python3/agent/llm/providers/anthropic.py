@@ -1,12 +1,16 @@
+import json
+import logging
 import os
 from typing import AsyncGenerator, Generator, List
 
 from anthropic import Anthropic, AsyncAnthropic
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from ..base import LLMProvider
+from ..base import LLMProvider, StreamState
 from ..constants import CLAUDE_SONNET
 from ..types import CompletionResponse, ContentType, InferenceConfig, Message, TextContent, Tool, ToolCall
+
+logger = logging.getLogger(__name__)
 
 
 class AnthropicProvider(LLMProvider):
@@ -69,7 +73,7 @@ class AnthropicProvider(LLMProvider):
         *,
         messages: List[Message],
         config: InferenceConfig | None,
-    ) -> Generator[str, None, None]:
+    ) -> Generator[ContentType, None, None]:
         if not self.sync_client:
             raise ValueError("Anthropic client not configured")
 
@@ -122,8 +126,9 @@ class AnthropicProvider(LLMProvider):
         self,
         *,
         messages: List[Message],
+        tools: List[Tool],
         config: InferenceConfig | None,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[ContentType, None]:
         if not self.async_client:
             raise ValueError("Anthropic async client not configured")
 
@@ -134,12 +139,30 @@ class AnthropicProvider(LLMProvider):
                 max_tokens=config.max_tokens,
                 model=config.model or CLAUDE_SONNET,
                 messages=[msg.model_dump() for msg in messages],
+                tools=[tool.model_dump() for tool in tools],
                 stream=True,
             )
-
+            stream_state: StreamState = StreamState.DEFAULT
+            tool_id, tool_name, tool_input = "", "", ""
             async for chunk in response:
-                if chunk.type == "content_block_delta" and chunk.delta and chunk.delta.text:
-                    yield chunk.delta.text
+                if chunk.type == "content_block_delta":
+                    if chunk.delta.type == "text_delta":
+                        yield TextContent(text=chunk.delta.text)
+                    elif chunk.delta.type == "input_json_delta" and stream_state == StreamState.PARSING_TOOL:
+                        tool_input += chunk.delta.partial_json
+                elif chunk.type == "content_block_start":
+                    if chunk.content_block.type == "tool_use":
+                        tool_id = chunk.content_block.id
+                        tool_name = chunk.content_block.name
+                        stream_state = StreamState.PARSING_TOOL
+                    elif chunk.content_block.type == "text":
+                        stream_state = StreamState.PARSING_MSG
+                elif chunk.type == "content_block_stop":
+                    if stream_state == StreamState.PARSING_TOOL:
+                        input_dict = json.loads(tool_input)
+                        yield ToolCall(id=tool_id, name=tool_name, input=input_dict)
+                        tool_id, tool_name, tool_input = "", "", ""
+                    stream_state = StreamState.DEFAULT
 
         except Exception as e:
             raise e

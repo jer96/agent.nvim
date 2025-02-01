@@ -1,7 +1,8 @@
 import asyncio
 import logging
 import uuid
-from typing import List
+from functools import partial
+from typing import Callable, List
 
 import pynvim
 
@@ -10,16 +11,26 @@ from .llm.constants import SYSTEM_PROMPT, create_file_prompt_from_buf, create_fi
 from .llm.factory import LLMProviderFactory
 from .llm.types import (
     CompletionResponse,
+    ContentType,
     InferenceConfig,
     Message,
     TextContent,
     ToolCall,
+    ToolResult,
 )
 from .mcp import MCPClient, get_file_system_server_params
 from .storage import ChatStorage
 from .ui import ChatView
 
 logger = logging.getLogger(__name__)
+
+
+StopConditionFunc = Callable[[List[Message]], bool]
+
+
+def default_stop_condition(messages: List[Message]) -> bool:
+    """Default stop condition that checks if there's only one message."""
+    return len(messages) <= 1
 
 
 class ChatInterface:
@@ -105,6 +116,32 @@ class ChatInterface:
         self._save_current_conversation()
         self.view.update_display(self.messages)
 
+    def mcp_send_on_complete(
+        self,
+        future: asyncio.Future,
+        stream: bool = False,
+        stop_conditions: List[StopConditionFunc] | None = None,
+    ) -> None:
+        messages: List[Message] = future.result()
+        if not messages:
+            return
+        stop_conditions = stop_conditions or [default_stop_condition]
+        should_stop = any(condition(messages) for condition in stop_conditions)
+        add_message_func = partial(self._add_messages, messages=messages)
+        funcs_to_call = [add_message_func, self.view.focus_chat_window]
+        if not should_stop:
+            send_func = self.send_message_stream if stream else self.send_message
+            funcs_to_call.append(send_func)
+        self.nvim.async_call(lambda: [f() for f in funcs_to_call])
+
+    def finalize_messages(self, assistant_content: List[ContentType], tool_results=List[ToolResult]):
+        messages = []
+        if assistant_content:
+            messages.append(Message(role="assistant", content=assistant_content))
+        if tool_results:
+            messages.append(Message(role="user", content=tool_results))
+        return messages
+
     def send_message(self):
         if self.current_conversation_id is None:
             self._start_new_conversation()
@@ -114,16 +151,14 @@ class ChatInterface:
             self.view.clear_input()
             self._add_messages([Message(role="user", content=message)])
         system_prompt = self._get_system_prompt_with_context()
+        config = InferenceConfig(system_prompt=system_prompt)
 
         async def mcp_send() -> List[Message]:
             tools = await self.mcp_client.get_available_tools()
-            config = InferenceConfig(system_prompt=system_prompt)
             response: CompletionResponse = await self.llm_provider.async_complete(
                 messages=self.messages, tools=tools, config=config
             )
-
-            tool_results = []
-            assistant_content = []
+            tool_results, assistant_content = [], []
             for content in response.content:
                 if isinstance(content, TextContent):
                     assistant_content.append(content)
@@ -131,41 +166,11 @@ class ChatInterface:
                     assistant_content.append(content)
                     results = await self.mcp_client.call_tool(content)
                     tool_results.append(*results)
-
-            logger.debug(f"mcp_send response {assistant_content}")
-            logger.debug(f"mcp_send tool result {tool_results}")
-
-            messages = []
-            if assistant_content:
-                messages.append(Message(role="assistant", content=assistant_content))
-            if tool_results:
-                messages.append(Message(role="user", content=tool_results))
-            return messages
-
-        def mcp_send_on_complete(future):
-            try:
-                messages = future.result()
-                if messages:
-                    if len(messages) > 1:
-                        self.nvim.async_call(
-                            lambda: [
-                                self._add_messages(messages),
-                                self.view.focus_chat_window(),
-                                self.send_message(),
-                            ]
-                        )
-                    else:
-                        self.nvim.async_call(
-                            lambda: [
-                                self._add_messages(messages),
-                                self.view.focus_chat_window(),
-                            ]
-                        )
-            except Exception as e:
-                logger.error(f"Error in message processing: {e}")
+            return self.finalize_messages(assistant_content, tool_results)
 
         future = asyncio.run_coroutine_threadsafe(mcp_send(), self.nvim.loop)
-        future.add_done_callback(mcp_send_on_complete)
+        callback = partial(self.mcp_send_on_complete, stream=False)
+        future.add_done_callback(callback)
 
     def send_message_stream(self):
         if self.current_conversation_id is None:
@@ -178,14 +183,26 @@ class ChatInterface:
 
         system_prompt = self._get_system_prompt_with_context()
         config = InferenceConfig(system_prompt=system_prompt)
-        event_stream = self.llm_provider.complete_stream(messages=self.messages, config=config)
 
-        self.view.begin_streaming()
-        assistant_message = Message(role="assistant", content="")
-        for event in event_stream:
-            if self.messages[-1].role == "user":
-                self.messages.append(assistant_message)
-            assistant_message.content = assistant_message.content + event
-            self.view.update_display(self.messages)
-        self._save_current_conversation()
-        self.view.end_streaming()
+        async def mcp_send_stream():
+            tools = await self.mcp_client.get_available_tools()
+            event_stream = self.llm_provider.async_complete_stream(messages=self.messages, tools=tools, config=config)
+            tool_results, assistant_content = [], []
+            assistant_message = Message(role="assistant", content="")
+            self.nvim.async_call(self.view.begin_streaming)
+            async for event in event_stream:
+                if self.messages[-1].role == "user":
+                    self.messages.append(assistant_message)
+                if isinstance(event, TextContent):
+                    assistant_message.content += event.text
+                elif isinstance(event, ToolCall):
+                    assistant_content.append(event)
+                    results = await self.mcp_client.call_tool(event)
+                    tool_results.append(*results)
+                self.nvim.async_call(self.view.update_display, self.messages)
+            self.nvim.async_call(self.view.end_streaming)
+            return self.finalize_messages(assistant_content, tool_results)
+
+        future = asyncio.run_coroutine_threadsafe(mcp_send_stream(), self.nvim.loop)
+        callback = partial(self.mcp_send_on_complete, stream=True)
+        future.add_done_callback(callback)

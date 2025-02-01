@@ -1,13 +1,20 @@
 from abc import ABC, abstractmethod
+from enum import Enum
 from typing import AsyncGenerator, Generator, List
 
 from .types import (
     CompletionResponse,
+    ContentType,
     InferenceConfig,
     Message,
-    StreamResponse,
     Tool,
 )
+
+
+class StreamState(Enum):
+    DEFAULT = "default"
+    PARSING_MSG = "msg_parse"
+    PARSING_TOOL = "tool_parse"
 
 
 class LLMProvider(ABC):
@@ -38,7 +45,7 @@ class LLMProvider(ABC):
         *,
         messages: List[Message],
         config: InferenceConfig | None,
-    ) -> Generator[StreamResponse, None, None]:
+    ) -> Generator[ContentType, None, None]:
         """
         Stream a completion from the LLM.
 
@@ -67,7 +74,8 @@ class LLMProvider(ABC):
         self,
         *,
         messages: List[Message],
+        tools: List[Tool],
         config: InferenceConfig | None,
-    ) -> AsyncGenerator[StreamResponse, None]:
+    ) -> AsyncGenerator[ContentType, None]:
         """Async version of complete_stream"""
         pass

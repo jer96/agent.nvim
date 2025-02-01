@@ -60,13 +60,6 @@ class CompletionResponse(BaseModel):
     content: List[ContentType]
 
 
-class StreamResponse(BaseModel):
-    """Response chunk from a streaming LLM interaction."""
-
-    text: str
-    done: bool = False
-
-
 MessageRole = Literal["system", "user", "assistant"]
 
 
