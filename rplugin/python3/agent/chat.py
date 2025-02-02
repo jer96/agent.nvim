@@ -2,16 +2,17 @@ import asyncio
 import logging
 import uuid
 from functools import partial
-from typing import Callable, List
+from typing import Any, Awaitable, Callable, List, TypeVar
 
 import pynvim
 
 from .context import AgentContext
-from .llm.constants import SYSTEM_PROMPT, create_file_prompt_from_buf, create_file_prompt_from_file
+from .llm.constants import ASSISTANT_READ_FILES_PROMPT, SYSTEM_PROMPT
 from .llm.factory import LLMProviderFactory
 from .llm.types import (
     CompletionResponse,
     ContentType,
+    FileContext,
     InferenceConfig,
     Message,
     TextContent,
@@ -25,12 +26,27 @@ from .ui import ChatView
 logger = logging.getLogger(__name__)
 
 
-StopConditionFunc = Callable[[List[Message]], bool]
+T = TypeVar("T")  # Return type of the coroutine
+LoopConditionFunc = Callable[[List[Message]], bool]
 
 
-def default_stop_condition(messages: List[Message]) -> bool:
-    """Default stop condition that checks if there's only one message."""
-    return len(messages) <= 1
+def last_message_contains_tool_use(messages: List[Message]) -> bool:
+    if not messages:
+        return False
+
+    last_message = messages[-1]
+    content = last_message.content
+    if isinstance(content, list):
+        has_tools = any(isinstance(item, (ToolResult)) for item in content)
+    else:
+        has_tools = isinstance(content, ToolResult)
+
+    return has_tools
+
+
+def default_loop_condition(messages: List[Message]) -> bool:
+    """Default condition that determines if the agent should loop (i.e. process tool results)."""
+    return last_message_contains_tool_use(messages)
 
 
 class ChatInterface:
@@ -90,25 +106,38 @@ class ChatInterface:
         return True
 
     def _get_system_prompt_with_context(self):
-        """Get system prompt with current buffer and file contexts."""
-        # Get buffer and file contexts
-        active_bufs = self.context.get_active_buffers()
-        buf_contexts = [create_file_prompt_from_buf(buf) for buf in active_bufs]
-
-        files = self.context.get_additional_files()
-        file_contexts = [
-            context for context in [create_file_prompt_from_file(file_path) for file_path in files] if context
-        ]
-
-        all_file_contexts = buf_contexts + file_contexts
-        files_content = "".join(all_file_contexts) if all_file_contexts else ""
+        """Get system prompt with cwd context."""
         directory_tree = self.context.get_directory_tree()
+        return SYSTEM_PROMPT.replace("{{CWD}}", self.context.cwd).replace("{{DIRECTORY_TREE}}", directory_tree)
 
-        return (
-            SYSTEM_PROMPT.replace("{{FILES}}", files_content)
-            .replace("{{CWD}}", self.context.cwd)
-            .replace("{{DIRECTORY_TREE}}", directory_tree)
+    async def _attach_context(self, context: FileContext):
+        if last_message_contains_tool_use(self.messages):
+            return
+
+        context_tool_calls = context.get_read_file_tool_calls()
+        if not context_tool_calls:
+            return
+
+        tool_results: ToolResult = []
+        for tool_call in context_tool_calls:
+            results = await self.mcp_client.call_tool(tool_call)
+            tool_results.append(*results)
+
+        assistant_content = [TextContent(text=ASSISTANT_READ_FILES_PROMPT), *context_tool_calls]
+        last_user_message = self.messages.pop()
+        self.messages.extend(
+            [
+                Message(role="user", content=context.get_prompt()),
+                Message(role="assistant", content=assistant_content),
+                Message(role="user", content=tool_results),
+                last_user_message,
+            ],
         )
+
+    def _get_file_context(self) -> FileContext:
+        active_buffers = [buf.name for buf in self.context.get_active_buffers()]
+        context_files = self.context.get_additional_files()
+        return FileContext(active_buffers=active_buffers, files=context_files)
 
     def _add_messages(self, messages: List[Message]):
         """Add messages to the conversation and update display."""
@@ -116,25 +145,7 @@ class ChatInterface:
         self._save_current_conversation()
         self.view.update_display(self.messages)
 
-    def mcp_send_on_complete(
-        self,
-        future: asyncio.Future,
-        stream: bool = False,
-        stop_conditions: List[StopConditionFunc] | None = None,
-    ) -> None:
-        messages: List[Message] = future.result()
-        if not messages:
-            return
-        stop_conditions = stop_conditions or [default_stop_condition]
-        should_stop = any(condition(messages) for condition in stop_conditions)
-        add_message_func = partial(self._add_messages, messages=messages)
-        funcs_to_call = [add_message_func, self.view.focus_chat_window]
-        if not should_stop:
-            send_func = self.send_message_stream if stream else self.send_message
-            funcs_to_call.append(send_func)
-        self.nvim.async_call(lambda: [f() for f in funcs_to_call])
-
-    def finalize_messages(self, assistant_content: List[ContentType], tool_results=List[ToolResult]):
+    def _finalize_messages(self, assistant_content: List[ContentType], tool_results=List[ToolResult]):
         messages = []
         if assistant_content:
             messages.append(Message(role="assistant", content=assistant_content))
@@ -142,7 +153,7 @@ class ChatInterface:
             messages.append(Message(role="user", content=tool_results))
         return messages
 
-    def send_message(self):
+    def _handle_user_input(self):
         if self.current_conversation_id is None:
             self._start_new_conversation()
 
@@ -150,10 +161,41 @@ class ChatInterface:
         if message and message.strip():
             self.view.clear_input()
             self._add_messages([Message(role="user", content=message)])
+
+    def _schedule_coroutine(
+        self,
+        coro: Callable[[], Awaitable[T]],
+        done_callback: Callable[[asyncio.Future[T]], Any],
+    ) -> None:
+        future = asyncio.run_coroutine_threadsafe(coro(), self.nvim.loop)
+        future.add_done_callback(done_callback)
+
+    def _mcp_send_on_complete(
+        self,
+        future: asyncio.Future,
+        stream: bool = False,
+        loop_conditions: List[LoopConditionFunc] | None = None,
+    ) -> None:
+        messages: List[Message] = future.result()
+        if not messages:
+            return
+        loop_conditions = loop_conditions or [default_loop_condition]
+        should_loop = any(condition(messages) for condition in loop_conditions)
+        add_message_func = partial(self._add_messages, messages=messages)
+        funcs_to_call = [add_message_func, self.view.focus_chat_window]
+        if should_loop:
+            send_func = self.send_message_stream if stream else self.send_message
+            funcs_to_call.append(send_func)
+        self.nvim.async_call(lambda: [f() for f in funcs_to_call])
+
+    def send_message(self):
+        self._handle_user_input()
         system_prompt = self._get_system_prompt_with_context()
         config = InferenceConfig(system_prompt=system_prompt)
+        context = self._get_file_context()
 
         async def mcp_send() -> List[Message]:
+            await self._attach_context(context)
             tools = await self.mcp_client.get_available_tools()
             response: CompletionResponse = await self.llm_provider.async_complete(
                 messages=self.messages, tools=tools, config=config
@@ -166,25 +208,19 @@ class ChatInterface:
                     assistant_content.append(content)
                     results = await self.mcp_client.call_tool(content)
                     tool_results.append(*results)
-            return self.finalize_messages(assistant_content, tool_results)
+            return self._finalize_messages(assistant_content, tool_results)
 
-        future = asyncio.run_coroutine_threadsafe(mcp_send(), self.nvim.loop)
-        callback = partial(self.mcp_send_on_complete, stream=False)
-        future.add_done_callback(callback)
+        done_callback = partial(self._mcp_send_on_complete, stream=False)
+        self._schedule_coroutine(mcp_send, done_callback)
 
     def send_message_stream(self):
-        if self.current_conversation_id is None:
-            self._start_new_conversation()
-
-        message = self.view.get_input_contents()
-        if message and message.strip():
-            self.view.clear_input()
-            self._add_messages([Message(role="user", content=message)])
-
+        self._handle_user_input()
         system_prompt = self._get_system_prompt_with_context()
         config = InferenceConfig(system_prompt=system_prompt)
+        context = self._get_file_context()
 
         async def mcp_send_stream():
+            await self._attach_context(context)
             tools = await self.mcp_client.get_available_tools()
             event_stream = self.llm_provider.async_complete_stream(messages=self.messages, tools=tools, config=config)
             tool_results, assistant_content = [], []
@@ -200,10 +236,8 @@ class ChatInterface:
                     results = await self.mcp_client.call_tool(event)
                     tool_results.append(*results)
                 self.nvim.async_call(self.view.update_display, self.messages)
-            asyncio.sleep(1)
             self.nvim.async_call(self.view.end_streaming)
-            return self.finalize_messages(assistant_content, tool_results)
+            return self._finalize_messages(assistant_content, tool_results)
 
-        future = asyncio.run_coroutine_threadsafe(mcp_send_stream(), self.nvim.loop)
-        callback = partial(self.mcp_send_on_complete, stream=True)
-        future.add_done_callback(callback)
+        done_callback = partial(self._mcp_send_on_complete, stream=True)
+        self._schedule_coroutine(mcp_send_stream, done_callback)

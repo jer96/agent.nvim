@@ -7,7 +7,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from ..llm.providers.anthropic import AnthropicProvider
-from ..llm.types import TextToolResult, Tool, ToolCall, ToolResult
+from ..llm.types import Tool, ToolCall, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +118,7 @@ class MCPClient:
         tool_results = []
         for content in result.content:
             if content.type == "text":
-                tool_results.append(TextToolResult(tool_use_id=tool_id, content=content.text, is_error=result.isError))
+                tool_results.append(ToolResult(tool_use_id=tool_id, content=content.text, is_error=result.isError))
         return tool_results
 
     async def cleanup(self):

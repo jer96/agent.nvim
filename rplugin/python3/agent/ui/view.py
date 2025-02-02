@@ -6,8 +6,8 @@ import pynvim
 from ..llm.types import (
     Message,
     TextContent,
-    TextToolResult,
     ToolCall,
+    ToolResult,
 )
 
 
@@ -162,7 +162,7 @@ class ChatView:
                     display_lines.extend(formatted_input.splitlines())
                     display_lines.append("```")
                     display_lines.append("")
-                elif isinstance(content, TextToolResult):
+                elif isinstance(content, ToolResult):
                     display_lines.append("### TOOL RESULT")
                     display_lines.append("")
                     tool_result = content

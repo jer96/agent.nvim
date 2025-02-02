@@ -15,15 +15,6 @@ FILE_TREE_IGNORE_PATTERNS = [
     ".DS_Store",
     ".egg-info",
 ]
-FILE_CONTEXT_PROMPT = """
-================================================
-File: {{FILE}}
-Lines: {{LINES}}
-Active: {{ACTIVE}}
-================================================
-{{CONTENT}}
-
-"""
 SYSTEM_PROMPT = """You are an AI assistant embedded into the Neovim text editor. Your primary function is to provide context-aware assistance based on the files open in the editor and the current working directory. You have full access to all the files and directories in the current working directory. You also have the capability to answer general questions unrelated to the editing context.
 
 Here is the crucial information about your editing environment:
@@ -35,10 +26,6 @@ Here is the crucial information about your editing environment:
 <directory_structure>
 {{DIRECTORY_TREE}}
 </directory_structure>
-
-<context_files>
-{{FILES}}
-</context_files>
 
 When responding to user queries, follow these steps:
 
@@ -54,51 +41,36 @@ When responding to user queries, follow these steps:
    - Identify which files or directory information might be relevant to the query (if applicable).
 
 3. Formulate your response:
-   - Wrap your analysis inside <editing_context_analysis> tags to show your reasoning process.
    - If the query is related to the editing context:
      a. List relevant files and their content.
      b. Quote specific parts of files that are pertinent to the user's query.
-     c. Explain how the current working directory relates to the query.
      d. Consider and list potential actions or suggestions based on the context.
    - If the query is a general question:
      a. Provide a well-informed answer based on your general knowledge.
    - Ensure your final response is tailored to either the specific editing context or the general query.
 
-4. Provide your response:
-   - After your context analysis, give your final response to the user.
-   - Your response should be clear, concise, and directly address the user's query.
+4. Tool use specific instructions
+    - ALWAYS set dryRun=true when using the `edit_tool`
+    - ALWAYS obtain explicit user consent before using the `write_tool`
 
-Remember, while your knowledge of the files and working directory is crucial for providing relevant assistance, you should also be prepared to answer general questions unrelated to the editing context.
-
-Example structure of a response:
-
-<context_analysis>
-[Your detailed analysis of the context, including file listings, relevant quotes, directory relevance, and potential actions]
-</context_analysis>
-
-[Your final response to the user, tailored to either the editing context or the general query]
-
-Please proceed with this structure when responding to user queries."""
+Remember, while your knowledge of the files and working directory is crucial for providing relevant assistance, you should also be prepared to answer general questions unrelated to the editing context."""
 
 
-def create_file_prompt_from_buf(buf):
-    content = "\n".join(buf[:]).strip()
-    return _create_file_context_prompt(buf.name, content, str(len(buf)), True)
+FILE_CONTEXT_PROMPT = """
+Here are the relevant files in the editing context.
+<context_files>
+{{FILES}}
+</context_files>
+"""
+
+FILE_PROMPT = """
+<file>
+    <name>{{FILE}}</name>
+    <active>{{ACTIVE}}</active>
+</file>
+"""
+ASSISTANT_READ_FILES_PROMPT = "I'll read the files you've provided."
 
 
-def create_file_prompt_from_file(file_path):
-    try:
-        lines = open(file_path, "r").readlines()
-        return _create_file_context_prompt(file_path, "".join(lines), len(lines))
-    except Exception:
-        return None
-
-
-def _create_file_context_prompt(file_path: str, content: str, lines: int, active: bool = False):
-    return (
-        FILE_CONTEXT_PROMPT.replace("{{FILE}}", file_path)
-        .replace("{{LINES}}", str(lines))
-        .replace("{{ACTIVE}}", str(active))
-        .replace("{{CONTENT}}", content)
-        .lstrip()
-    )
+def create_file_context_prompt(file_path: str, active: bool = False):
+    return FILE_PROMPT.replace("{{FILE}}", file_path).replace("{{ACTIVE}}", str(active)).strip()

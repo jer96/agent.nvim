@@ -8,7 +8,7 @@ from pynvim.api import Buffer
 from .llm.constants import FILE_TREE_IGNORE_PATTERNS
 
 IGNORED_BUF_FILE_TYPES = {"alpha", "unkown", "NvimTree", "TelescopePrompt", "TelescopeResult", "agent.nvim"}
-IGNORED_BUF_PATTERNS = {"agent chat"}
+IGNORED_BUF_PATTERNS = {"agent chat", "NvimTree"}
 
 
 logger = logging.getLogger(__name__)
