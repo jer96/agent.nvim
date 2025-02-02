@@ -5,7 +5,8 @@ from typing import Dict, List
 import pynvim
 from pynvim.api import Buffer
 
-from .llm.constants import FILE_TREE_IGNORE_PATTERNS
+from .llm.constants import FILE_TREE_IGNORE_PATTERNS, SYSTEM_PROMPT
+from .llm.types import FileContext
 
 IGNORED_BUF_FILE_TYPES = {"alpha", "unkown", "NvimTree", "TelescopePrompt", "TelescopeResult", "agent.nvim"}
 IGNORED_BUF_PATTERNS = {"agent chat", "NvimTree"}
@@ -87,7 +88,7 @@ class AgentContext:
             ctx_buf = self.active_buffers[buf_number]
             ctx_buf.is_active = not ctx_buf.is_active
 
-    def get_directory_tree(
+    def _get_directory_tree(
         self,
         max_depth: int = 3,
         include_hidden: bool = False,
@@ -132,3 +133,11 @@ class AgentContext:
 
         tree = build_tree(self.cwd)
         return tree if tree else ""
+
+    def get_system_prompt_with_context(self):
+        return SYSTEM_PROMPT.replace("{{CWD}}", self.cwd).replace("{{DIRECTORY_TREE}}", self._get_directory_tree())
+
+    def get_file_context(self) -> FileContext:
+        active_buffers = [buf.name for buf in self.get_active_buffers()]
+        context_files = self.get_additional_files()
+        return FileContext(active_buffers=active_buffers, files=context_files)

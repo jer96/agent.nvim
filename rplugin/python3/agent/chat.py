@@ -7,7 +7,7 @@ from typing import Any, Awaitable, Callable, List, TypeVar
 import pynvim
 
 from .context import AgentContext
-from .llm.constants import ASSISTANT_READ_FILES_PROMPT, SYSTEM_PROMPT
+from .llm.constants import ASSISTANT_READ_FILES_PROMPT
 from .llm.factory import LLMProviderFactory
 from .llm.types import (
     CompletionResponse,
@@ -26,7 +26,7 @@ from .ui import ChatView
 logger = logging.getLogger(__name__)
 
 
-T = TypeVar("T")  # Return type of the coroutine
+T = TypeVar("T")
 LoopConditionFunc = Callable[[List[Message]], bool]
 
 
@@ -105,11 +105,6 @@ class ChatInterface:
 
         return True
 
-    def _get_system_prompt_with_context(self):
-        """Get system prompt with cwd context."""
-        directory_tree = self.context.get_directory_tree()
-        return SYSTEM_PROMPT.replace("{{CWD}}", self.context.cwd).replace("{{DIRECTORY_TREE}}", directory_tree)
-
     async def _attach_context(self, context: FileContext):
         if last_message_contains_tool_use(self.messages):
             return
@@ -133,11 +128,6 @@ class ChatInterface:
                 last_user_message,
             ],
         )
-
-    def _get_file_context(self) -> FileContext:
-        active_buffers = [buf.name for buf in self.context.get_active_buffers()]
-        context_files = self.context.get_additional_files()
-        return FileContext(active_buffers=active_buffers, files=context_files)
 
     def _add_messages(self, messages: List[Message]):
         """Add messages to the conversation and update display."""
@@ -199,9 +189,9 @@ class ChatInterface:
 
     def send_message(self):
         self._handle_user_input()
-        system_prompt = self._get_system_prompt_with_context()
+        system_prompt = self.context.get_system_prompt_with_context()
+        context = self.context.get_file_context()
         config = InferenceConfig(system_prompt=system_prompt)
-        context = self._get_file_context()
 
         async def mcp_send() -> List[Message]:
             await self._attach_context(context)
@@ -224,9 +214,9 @@ class ChatInterface:
 
     def send_message_stream(self):
         self._handle_user_input()
-        system_prompt = self._get_system_prompt_with_context()
+        system_prompt = self.context.get_system_prompt_with_context()
+        context = self.context.get_file_context()
         config = InferenceConfig(system_prompt=system_prompt)
-        context = self._get_file_context()
 
         async def mcp_send_stream():
             await self._attach_context(context)
