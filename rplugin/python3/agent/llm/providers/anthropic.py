@@ -131,7 +131,6 @@ class AnthropicProvider(LLMProvider):
     ) -> AsyncGenerator[ContentType, None]:
         if not self.async_client:
             raise ValueError("Anthropic async client not configured")
-        logger.debug(messages)
 
         try:
             response = await self.async_client.messages.create(

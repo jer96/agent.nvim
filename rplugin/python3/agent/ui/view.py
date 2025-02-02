@@ -171,6 +171,7 @@ class ChatView:
                     display_lines.append(f"> Error: {is_error}")
                     display_lines.append("")
                     display_wrapped_string(tool_content)
+                    display_lines.append("")
                 elif isinstance(content, list):
                     for con in content:
                         display_blocks(con)

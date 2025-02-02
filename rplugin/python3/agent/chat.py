@@ -158,7 +158,7 @@ class ChatInterface:
             self._start_new_conversation()
 
         message = self.view.get_input_contents()
-        if message and message.strip():
+        if message:
             self.view.clear_input()
             self._add_messages([Message(role="user", content=message)])
 
@@ -172,20 +172,29 @@ class ChatInterface:
 
     def _mcp_send_on_complete(
         self,
-        future: asyncio.Future,
+        future: asyncio.Future[List[Message]],
         stream: bool = False,
         loop_conditions: List[LoopConditionFunc] | None = None,
     ) -> None:
+        """Callback to process LLM response messages.
+
+        asyncio callbacks cannot make blocking requests (including accessing state)
+        therefore all stateful operations are wrapped in an nvim async_call
+
+        https://pynvim.readthedocs.io/en/latest/api/nvim.html
+        """
         messages: List[Message] = future.result()
         if not messages:
             return
+        add_message_partial = partial(self._add_messages, messages=messages)
+        funcs_to_call = [add_message_partial]
         loop_conditions = loop_conditions or [default_loop_condition]
         should_loop = any(condition(messages) for condition in loop_conditions)
-        add_message_func = partial(self._add_messages, messages=messages)
-        funcs_to_call = [add_message_func, self.view.focus_chat_window]
         if should_loop:
             send_func = self.send_message_stream if stream else self.send_message
             funcs_to_call.append(send_func)
+        else:
+            funcs_to_call.append(self.view.focus_chat_window)
         self.nvim.async_call(lambda: [f() for f in funcs_to_call])
 
     def send_message(self):
@@ -231,11 +240,11 @@ class ChatInterface:
                     self.messages.append(assistant_message)
                 if isinstance(event, TextContent):
                     assistant_message.content += event.text
+                    self.nvim.async_call(self.view.update_display, self.messages)
                 elif isinstance(event, ToolCall):
                     assistant_content.append(event)
                     results = await self.mcp_client.call_tool(event)
                     tool_results.append(*results)
-                self.nvim.async_call(self.view.update_display, self.messages)
             self.nvim.async_call(self.view.end_streaming)
             return self._finalize_messages(assistant_content, tool_results)
 
