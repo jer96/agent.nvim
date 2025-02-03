@@ -12,6 +12,10 @@ from ..types import CompletionResponse, ContentType, InferenceConfig, Message, T
 
 logger = logging.getLogger(__name__)
 
+logging.getLogger("anthropic").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 
 class AnthropicProvider(LLMProvider):
     def __init__(self):

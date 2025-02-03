@@ -21,6 +21,7 @@ from .llm.types import (
 )
 from .mcp import MCPClient, get_file_system_server_params
 from .storage import ChatStorage
+from .tools import ToolRegistry
 from .ui import ChatView
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,7 @@ class ChatInterface:
         self.llm_provider = LLMProviderFactory.create(self.nvim)
         self.view = ChatView(self.nvim)
         self.storage = ChatStorage(self.nvim)
+        self.tool_registry = ToolRegistry(self.context)
         self.mcp_client = MCPClient(self._get_mcp_server_params(), self.nvim.loop)
         self.mcp_client.start()
 
@@ -177,7 +179,8 @@ class ChatInterface:
         if not messages:
             return
         add_message_partial = partial(self._add_messages, messages=messages)
-        funcs_to_call = [add_message_partial]
+        handle_tools_partial = partial(self.tool_registry.handle_messages, messages=messages)
+        funcs_to_call = [add_message_partial, handle_tools_partial]
         loop_conditions = loop_conditions or [default_loop_condition]
         should_loop = any(condition(messages) for condition in loop_conditions)
         if should_loop:

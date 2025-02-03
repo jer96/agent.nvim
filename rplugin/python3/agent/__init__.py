@@ -43,7 +43,7 @@ class AgentPlugin:
 
     @pynvim.command("AgentContext", sync=True)
     def show_context_picker(self):
-        self.nvim.command('lua require("agent.ui.telescope").file_picker_with_context()')
+        self.nvim.command('lua require("agent.ui.context").file_picker_with_context()')
 
     @pynvim.function("AgentContextGetData", sync=True)
     def get_context_data(self, args: List[str]) -> Dict:

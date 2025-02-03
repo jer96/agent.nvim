@@ -141,3 +141,42 @@ class AgentContext:
         active_buffers = [buf.name for buf in self.get_active_buffers()]
         context_files = self.get_additional_files()
         return FileContext(active_buffers=active_buffers, files=context_files)
+
+    def reload_buffer(self, buf: Buffer) -> None:
+        """Reload a buffer's content from disk without changing window focus.
+
+        Args:
+            buf: The buffer to reload
+        """
+        with open(buf.name, "r") as f:
+            content = f.read().splitlines()
+        buf[:] = content
+        # Mark buffer as unmodified since it now matches the file
+        buf.options['modified'] = False
+
+    def get_active_buffer_for_path(self, file_path: str) -> Buffer | None:
+        """Check if a file path matches any active buffer and return the buffer if found.
+
+        Args:
+            file_path: Either absolute or relative path to check
+
+        Returns:
+            Buffer | None: The matching buffer if found, None otherwise
+        """
+        if not file_path:
+            return None
+
+        # Convert to absolute path if relative
+        if not os.path.isabs(file_path):
+            file_path = os.path.join(self.cwd, file_path)
+
+        # Normalize paths for comparison
+        file_path = os.path.normpath(file_path)
+
+        # Check against active buffers
+        for buf in self.get_active_buffers():
+            buf_path = os.path.normpath(buf.name)
+            if buf_path == file_path:
+                return buf
+
+        return None
