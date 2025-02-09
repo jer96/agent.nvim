@@ -163,7 +163,9 @@ class AnthropicProvider(LLMProvider):
                         stream_state = StreamState.PARSING_MSG
                 elif chunk.type == "content_block_stop":
                     if stream_state == StreamState.PARSING_TOOL:
-                        input_dict = json.loads(tool_input)
+                        input_dict = {}
+                        if tool_input:
+                            input_dict = json.loads(tool_input)
                         yield ToolCall(id=tool_id, name=tool_name, input=input_dict)
                         tool_id, tool_name, tool_input = "", "", ""
                     stream_state = StreamState.DEFAULT

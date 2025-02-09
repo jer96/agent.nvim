@@ -1,14 +1,11 @@
-import json
-from typing import Any, List
+from typing import List
 
 import pynvim
 
 from ..llm.types import (
     Message,
-    TextContent,
-    ToolCall,
-    ToolResult,
 )
+from .format import MessageFormatter
 
 
 class ChatView:
@@ -18,6 +15,10 @@ class ChatView:
         self.chat_buf = None
         self.input_win = None
         self.input_buf = None
+        self.is_streaming = False
+        self.stream_start_pos = None
+        self.last_processed_index = -1
+        self.formatter = MessageFormatter()
 
     @property
     def is_valid(self) -> bool:
@@ -58,6 +59,8 @@ class ChatView:
         self.nvim.command("vsplit")
         self.chat_win = self.nvim.current.window
         self.nvim.current.buffer = self.chat_buf
+        window_width = self.nvim.api.win_get_width(self.chat_win)
+        self.formatter.window_width = window_width
 
         self.nvim.command("split")
         self.nvim.command("resize 5")
@@ -113,75 +116,58 @@ class ChatView:
             self.nvim.api.buf_delete(self.input_buf, {"force": True})
         self.chat_buf = None
         self.input_buf = None
+        self.last_processed_index = -1  # Reset the message index when buffers are deleted
+
+    def _format_message(self, message: Message, window_width: int) -> List[str]:
+        """Format a single message into displayable lines using MessageFormatter."""
+        self.formatter.window_width = window_width
+        return self.formatter.format_message(message)
+
+    def _update_buffer(self, lines: List[str], start: int, end: int):
+        """Helper to update buffer content while preserving state"""
+        self.chat_buf.options["modifiable"] = True
+        self.nvim.api.buf_set_lines(self.chat_buf, start, end, False, lines)
+        self.chat_buf.options["modifiable"] = False
 
     def update_display(self, messages: List[Message]):
         """Update the chat display with the given messages"""
         if not self.is_valid:
             return
 
-        window_width = self.nvim.api.win_get_width(self.chat_win)
-        display_lines = [""]
-        for message in messages:
-            role = message.role
+        try:
+            window_width = self.nvim.api.win_get_width(self.chat_win)
+            display_lines = []
 
-            def display_heading():
-                nonlocal role
-                heading_map = {"user": "#", "assistant": "##"}
-                heading = heading_map.get(role, "#")
-                role = role.upper()
-                padding = " " * ((window_width - len(role) - len(heading)) // 2)
-                role_header = f"{heading}{padding}{role}{padding}"
-                display_lines.append("---")
-                display_lines.append(role_header)
-                display_lines.append("---")
-                display_lines.append("")
+            # For streaming, only format the last message
+            if self.is_streaming:
+                message_index = len(messages) - 1
+                last_message = messages[message_index]
+                display_lines = self._format_message(last_message, window_width)
 
-            def display_wrapped_string(string: str):
-                wrapped_content = string.split("\n")
-                for line in wrapped_content:
-                    display_lines.append(line)
-                display_lines.append("")
+                if self.stream_start_pos is not None:
+                    self._update_buffer(display_lines, self.stream_start_pos, len(self.chat_buf))
+                    self.last_processed_index = message_index
+            else:
+                # Process all new messages since last update
+                current_line_count = len(self.chat_buf)
+                all_new_lines = []
 
-            def display_blocks(content: Any):
-                if isinstance(content, str):
-                    display_heading()
-                    display_wrapped_string(content)
-                elif isinstance(content, TextContent):
-                    display_heading()
-                    display_wrapped_string(content.text)
-                elif isinstance(content, ToolCall):
-                    display_lines.append("### TOOL CALL")
-                    display_lines.append("")
-                    tool_call = content
-                    tool_name = tool_call.name
-                    tool_input = tool_call.input
-                    display_lines.append(f"Name: `{tool_name}`")
-                    formatted_input = json.dumps(tool_input, indent=2)
-                    display_lines.append("Input:")
-                    display_lines.append("```")
-                    display_lines.extend(formatted_input.splitlines())
-                    display_lines.append("```")
-                    display_lines.append("")
-                elif isinstance(content, ToolResult):
-                    display_lines.append("### TOOL RESULT")
-                    display_lines.append("")
-                    tool_result = content
-                    tool_content = tool_result.content
-                    is_error = tool_result.is_error
-                    display_lines.append(f"> Error: {is_error}")
-                    display_lines.append("")
-                    display_wrapped_string(tool_content)
-                    display_lines.append("")
-                elif isinstance(content, list):
-                    for con in content:
-                        display_blocks(con)
+                # Process each new message that hasn't been displayed yet
+                for i in range(self.last_processed_index + 1, len(messages)):
+                    message = messages[i]
+                    message_lines = self._format_message(message, window_width)
+                    all_new_lines.extend(message_lines)
 
-            display_blocks(message.content)
+                if all_new_lines:
+                    self._update_buffer(all_new_lines, current_line_count, current_line_count)
+                    self.last_processed_index = len(messages) - 1
 
-        self.chat_buf.options["modifiable"] = True
-        self.chat_buf[:] = display_lines
-        self.chat_buf.options["modifiable"] = False
-        self.chat_win.cursor = (len(display_lines), 0)
+            self.chat_win.cursor = (len(self.chat_buf), 0)
+            if not self.is_streaming:
+                self._toggle_markdown_rendering(True)
+
+        except Exception as e:
+            self.nvim.err_write(f"agent.nvim display update failed: {str(e)}\n")
 
     def get_input_contents(self) -> str | None:
         """Get the contents of the input buffer"""
@@ -199,17 +185,20 @@ class ChatView:
 
     def focus_chat_window(self):
         """Focus the chat window"""
-        self.nvim.command("RenderMarkdown enable")
+        self._toggle_markdown_rendering(True)
         self.nvim.current.window = self.chat_win
 
-    def toggle_markdown_rendering(self, enable: bool):
+    def _toggle_markdown_rendering(self, enable: bool):
         """Toggle markdown rendering in the chat buffer."""
         command = "enable" if enable else "disable"
         self.nvim.command(f"RenderMarkdown {command}")
 
     def begin_streaming(self):
-        self.toggle_markdown_rendering(False)
+        self.is_streaming = True
+        self.stream_start_pos = len(self.chat_buf) if self.chat_buf else 0
+        self._toggle_markdown_rendering(False)
 
     def end_streaming(self):
-        self.toggle_markdown_rendering(True)
-        self.focus_chat_window()
+        self.is_streaming = False
+        self.stream_start_pos = None
+        self._toggle_markdown_rendering(True)

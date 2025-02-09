@@ -186,8 +186,6 @@ class ChatInterface:
         if should_loop:
             send_func = self.send_message_stream if stream else self.send_message
             funcs_to_call.append(send_func)
-        else:
-            funcs_to_call.append(self.view.focus_chat_window)
         self.nvim.async_call(lambda: [f() for f in funcs_to_call])
 
     def send_message(self):
