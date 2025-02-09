@@ -38,8 +38,10 @@ class ChatView:
         self.nvim.api.buf_set_keymap(self.input_buf, "n", "ss", "<Esc>:lua vim.fn.AgentSend()<CR>", opts)
         self.nvim.api.buf_set_keymap(self.input_buf, "n", "q", ":lua vim.fn.AgentClose()<CR>", opts)
         self.nvim.api.buf_set_keymap(self.input_buf, "n", "<C-x>", ":lua vim.fn.AgentClean()<CR>", opts)
+        self.nvim.api.buf_set_keymap(self.input_buf, "n", "<C-n>", ":lua vim.fn.AgentStartConversation()<CR>", opts)
         self.nvim.api.buf_set_keymap(self.chat_buf, "n", "q", ":lua vim.fn.AgentClose()<CR>", opts)
         self.nvim.api.buf_set_keymap(self.chat_buf, "n", "<C-x>", ":lua vim.fn.AgentClean()<CR>", opts)
+        self.nvim.api.buf_set_keymap(self.chat_buf, "n", "<C-n>", ":lua vim.fn.AgentStartConversation()<CR>", opts)
 
     def _create_chat_buffers(self):
         self.chat_buf = self.nvim.api.create_buf(False, True)
@@ -75,9 +77,19 @@ class ChatView:
             "signcolumn": "no",
         }
 
+        # Additional configs specific to input window
+        input_win_config = {
+            "winfixheight": True,
+        }
+
+        # Apply common config to both windows
         for win in [self.chat_win, self.input_win]:
             for option, value in win_config.items():
                 win.options[option] = value
+
+        # Apply input-specific config
+        for option, value in input_win_config.items():
+            self.input_win.options[option] = value
 
         self.nvim.current.window = self.input_win
         self.nvim.command("startinsert")
@@ -202,3 +214,16 @@ class ChatView:
         self.is_streaming = False
         self.stream_start_pos = None
         self._toggle_markdown_rendering(True)
+
+    def refresh_buffers(self):
+        """Empty both chat and input buffers and reset processing state."""
+        if self.chat_buf and self.chat_buf.valid:
+            self._update_buffer([], 0, len(self.chat_buf))
+
+        if self.input_buf and self.input_buf.valid:
+            self.clear_input()
+
+        # Reset processing state
+        self.last_processed_index = -1
+        self.is_streaming = False
+        self.stream_start_pos = None

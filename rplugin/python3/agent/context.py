@@ -9,7 +9,7 @@ from .llm.constants import FILE_TREE_IGNORE_PATTERNS, SYSTEM_PROMPT
 from .llm.types import FileContext
 
 IGNORED_BUF_FILE_TYPES = {"alpha", "unkown", "NvimTree", "TelescopePrompt", "TelescopeResult", "agent.nvim"}
-IGNORED_BUF_PATTERNS = {"agent chat", "NvimTree"}
+IGNORED_BUF_PATTERNS = {"agent chat", "NvimTree", "diffview", ".log", ".git"}
 
 
 logger = logging.getLogger(__name__)
@@ -152,7 +152,7 @@ class AgentContext:
             content = f.read().splitlines()
         buf[:] = content
         # Mark buffer as unmodified since it now matches the file
-        buf.options['modified'] = False
+        buf.options["modified"] = False
 
     def get_active_buffer_for_path(self, file_path: str) -> Buffer | None:
         """Check if a file path matches any active buffer and return the buffer if found.

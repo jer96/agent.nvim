@@ -41,9 +41,9 @@ class AgentPlugin:
     def clean_chat(self, args: List[str]):
         self.chat_interface.clean_chat()
 
-    @pynvim.command("AgentContext", sync=True)
-    def show_context_picker(self):
-        self.nvim.command('lua require("agent.ui.context").file_picker_with_context()')
+    @pynvim.function("AgentStartConversation", sync=True)
+    def start_conversation(self, args: List[str]):
+        self.chat_interface.start_conversation()
 
     @pynvim.function("AgentContextGetData", sync=True)
     def get_context_data(self, args: List[str]) -> Dict:

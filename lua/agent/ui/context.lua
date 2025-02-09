@@ -95,6 +95,9 @@ end
 
 -- telescope.lua
 M.file_picker_with_context = function()
+  -- Get the current working directory
+  local cwd = vim.fn.getcwd()
+
   builtin.find_files({
     prompt_title = "Configure Agent Context",
     previewer = context_previewer,
@@ -108,6 +111,12 @@ M.file_picker_with_context = function()
       -- Get context data to check file status
       local context_data = vim.fn.AgentContextGetData()
       local full_path = vim.fn.fnamemodify(path, ":p")
+
+      -- Check if file is within cwd
+      if not vim.startswith(full_path, cwd) then
+        return nil
+      end
+
       local relative_path = vim.fn.fnamemodify(path, ":.")
 
       -- First check if it's a buffer (whether active or not)

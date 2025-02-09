@@ -78,6 +78,11 @@ class ChatInterface:
         self.messages = []
         self._start_new_conversation()
 
+    def start_conversation(self):
+        self.view.refresh_buffers()
+        self.messages = []
+        self._start_new_conversation()
+
     def _get_mcp_server_params(self):
         file_system_server_params = get_file_system_server_params([self.context.cwd])
         return [file_system_server_params]
