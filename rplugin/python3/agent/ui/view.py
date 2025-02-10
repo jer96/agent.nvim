@@ -227,3 +227,17 @@ class ChatView:
         self.last_processed_index = -1
         self.is_streaming = False
         self.stream_start_pos = None
+
+    def resize_windows(self):
+        if not self.is_valid:
+            return
+
+        # Save current window
+        current_win = self.nvim.current.window
+
+        # Focus input window and resize it to 5 lines
+        self.nvim.current.window = self.input_win
+        self.nvim.command("resize 5")
+
+        # Restore the previous window focus
+        self.nvim.current.window = current_win

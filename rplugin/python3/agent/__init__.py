@@ -110,3 +110,15 @@ class AgentPlugin:
                 self.nvim.err_write(f"Conversation {conv_id} not found\n")
         except Exception as e:
             self.nvim.err_write(f"Error loading conversation: {str(e)}\n")
+
+    @pynvim.autocmd("WinResized", pattern="*", eval='expand("<afile>")')
+    def win_close_auto_cmd(self, filename):
+        if self.chat_interface.is_active:
+            self.chat_interface.view.resize_windows()
+
+    @pynvim.function("AgentHandleBufDelete")
+    def handle_buf_delete(self, args: List[str]) -> None:
+        if not args or not args[0]:
+            return
+        bufnr = int(args[0])
+        self.context.delete_active_buffer(bufnr)

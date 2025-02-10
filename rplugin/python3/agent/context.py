@@ -180,3 +180,8 @@ class AgentContext:
                 return buf
 
         return None
+
+    def delete_active_buffer(self, bufnr: int):
+        if bufnr in self.active_buffers:
+            self.nvim.api.buf_delete(bufnr, {"force": True})
+            del self.active_buffers[bufnr]
