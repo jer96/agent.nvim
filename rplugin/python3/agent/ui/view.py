@@ -141,6 +141,53 @@ class ChatView:
         self.nvim.api.buf_set_lines(self.chat_buf, start, end, False, lines)
         self.chat_buf.options["modifiable"] = False
 
+    def _process_messages(self, messages: List[Message], start_idx: int, end_idx: int, window_width: int) -> List[str]:
+        """Process a range of messages and return their formatted lines."""
+        lines = []
+        for i in range(start_idx, end_idx):
+            message = messages[i]
+            message_lines = self._format_message(message, window_width)
+            lines.extend(message_lines)
+        return lines
+
+    def _handle_streaming_message(self, messages: List[Message], window_width: int):
+        """Handle message updates in streaming mode."""
+        message_index = len(messages) - 1
+
+        # Handle any unprocessed messages before the streaming message
+        if self.last_processed_index < message_index - 1:
+            current_line_count = len(self.chat_buf)
+            intermediate_lines = self._process_messages(
+                messages,
+                self.last_processed_index + 1,
+                message_index,
+                window_width
+            )
+            if intermediate_lines:
+                self._update_buffer(intermediate_lines, current_line_count, current_line_count)
+
+        # Handle the streaming message
+        last_message = messages[message_index]
+        display_lines = self._format_message(last_message, window_width)
+
+        if self.stream_start_pos is not None:
+            self._update_buffer(display_lines, self.stream_start_pos, len(self.chat_buf))
+            self.last_processed_index = message_index
+
+    def _handle_normal_update(self, messages: List[Message], window_width: int):
+        """Handle message updates in normal (non-streaming) mode."""
+        current_line_count = len(self.chat_buf)
+        new_lines = self._process_messages(
+            messages,
+            self.last_processed_index + 1,
+            len(messages),
+            window_width
+        )
+
+        if new_lines:
+            self._update_buffer(new_lines, current_line_count, current_line_count)
+            self.last_processed_index = len(messages) - 1
+
     def update_display(self, messages: List[Message]):
         """Update the chat display with the given messages"""
         if not self.is_valid:
@@ -148,31 +195,11 @@ class ChatView:
 
         try:
             window_width = self.nvim.api.win_get_width(self.chat_win)
-            display_lines = []
 
-            # For streaming, only format the last message
             if self.is_streaming:
-                message_index = len(messages) - 1
-                last_message = messages[message_index]
-                display_lines = self._format_message(last_message, window_width)
-
-                if self.stream_start_pos is not None:
-                    self._update_buffer(display_lines, self.stream_start_pos, len(self.chat_buf))
-                    self.last_processed_index = message_index
+                self._handle_streaming_message(messages, window_width)
             else:
-                # Process all new messages since last update
-                current_line_count = len(self.chat_buf)
-                all_new_lines = []
-
-                # Process each new message that hasn't been displayed yet
-                for i in range(self.last_processed_index + 1, len(messages)):
-                    message = messages[i]
-                    message_lines = self._format_message(message, window_width)
-                    all_new_lines.extend(message_lines)
-
-                if all_new_lines:
-                    self._update_buffer(all_new_lines, current_line_count, current_line_count)
-                    self.last_processed_index = len(messages) - 1
+                self._handle_normal_update(messages, window_width)
 
             self.chat_win.cursor = (len(self.chat_buf), 0)
             if not self.is_streaming:
