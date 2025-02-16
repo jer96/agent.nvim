@@ -99,7 +99,7 @@ class Message(BaseModel):
     """Base message model for all LLM interactions."""
 
     role: MessageRole
-    content: Union[ContentType, List[ContentType]]
+    content: List[ContentType]
 
 
 class Conversation(BaseModel):
