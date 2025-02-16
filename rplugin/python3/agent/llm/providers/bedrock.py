@@ -135,6 +135,45 @@ class BedrockProvider(LLMProvider):
             logger.error(f"Error in async_complete: {str(e)}")
             raise e
 
+    def _prepare_bedrock_messages(self, messages: List[Message]) -> List[dict]:
+        """Prepare messages for Bedrock API format"""
+        bedrock_messages = []
+        for msg in messages:
+            logger.debug(msg)
+            content_list = []
+
+            if isinstance(msg.content, list):
+                content_list.extend([content for content in msg.content])
+            elif isinstance(msg.content, ContentType):
+                content_list.append(msg.content)
+
+            if content_list:
+                bedrock_messages.append(
+                    {
+                        "role": msg.role,
+                        "content": [content.bedrock_model_dump() for content in content_list],
+                    }
+                )
+        return bedrock_messages
+
+    def _prepare_tool_config(self, tools: List[Tool]) -> Optional[dict]:
+        """Prepare tool configuration for Bedrock API"""
+        if not tools:
+            return None
+
+        return {
+            "tools": [
+                {
+                    "toolSpec": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "inputSchema": {"json": tool.input_schema},
+                    }
+                }
+                for tool in tools
+            ]
+        }
+
     async def async_complete_stream(
         self,
         *,
@@ -147,38 +186,38 @@ class BedrockProvider(LLMProvider):
         if not client:
             raise ValueError("Bedrock async client not configured")
 
-        request_body = {
-            "anthropic_version": BEDROCK_ANTHROPIC_VERSION,
-            "max_tokens": config.max_tokens,
-            "temperature": config.temperature,
-            "system": config.system_prompt,
-            "messages": [msg.model_dump() for msg in messages],
-            "tools": [tool.model_dump() for tool in tools] if tools else [],
-        }
+        bedrock_messages = self._prepare_bedrock_messages(messages)
+        tool_config = self._prepare_tool_config(tools)
+        system_config = [{"text": config.system_prompt}]
 
         try:
             model_id = config.model or BEDROCK_CLAUDE
-            response = await client.invoke_model_with_response_stream(modelId=model_id, body=json.dumps(request_body))
+            response = await client.converse_stream(
+                system=system_config, modelId=model_id, messages=bedrock_messages, toolConfig=tool_config
+            )
 
             stream_state: StreamState = StreamState.DEFAULT
             tool_id, tool_name, tool_input = "", "", ""
 
-            async for event in response["body"]:
-                chunk = json.loads(event["chunk"]["bytes"])
-
-                if chunk["type"] == "content_block_delta":
-                    if chunk["delta"]["type"] == "text_delta":
-                        yield TextContent(text=chunk["delta"]["text"])
-                    elif chunk["delta"]["type"] == "input_json_delta" and stream_state == StreamState.PARSING_TOOL:
-                        tool_input += chunk["delta"]["partial_json"]
-                elif chunk["type"] == "content_block_start":
-                    if chunk["content_block"]["type"] == "tool_use":
-                        tool_id = chunk["content_block"]["id"]
-                        tool_name = chunk["content_block"]["name"]
+            async for chunk in response["stream"]:
+                if "messageStart" in chunk:
+                    # New message starting
+                    pass
+                elif "contentBlockStart" in chunk:
+                    if "toolUse" in chunk["contentBlockStart"]["start"]:
+                        tool = chunk["contentBlockStart"]["start"]["toolUse"]
+                        tool_id = tool["toolUseId"]
+                        tool_name = tool["name"]
                         stream_state = StreamState.PARSING_TOOL
-                    elif chunk["content_block"]["type"] == "text":
+                    else:
                         stream_state = StreamState.PARSING_MSG
-                elif chunk["type"] == "content_block_stop":
+                elif "contentBlockDelta" in chunk:
+                    delta = chunk["contentBlockDelta"]["delta"]
+                    if "toolUse" in delta and stream_state == StreamState.PARSING_TOOL:
+                        tool_input += delta["toolUse"]["input"]
+                    elif "text" in delta:
+                        yield TextContent(text=delta["text"])
+                elif "contentBlockStop" in chunk:
                     if stream_state == StreamState.PARSING_TOOL:
                         input_dict = {}
                         if tool_input:
@@ -186,9 +225,12 @@ class BedrockProvider(LLMProvider):
                         yield ToolCall(id=tool_id, name=tool_name, input=input_dict)
                         tool_id, tool_name, tool_input = "", "", ""
                     stream_state = StreamState.DEFAULT
+                elif "messageStop" in chunk:
+                    # Message complete
+                    pass
 
         except Exception as e:
-            logger.error(f"Error in async_complete_stream: {str(e)}")
+            logger.error(f"Error in async_complete_stream_converse: {str(e)}")
             raise e
 
     async def cleanup(self):

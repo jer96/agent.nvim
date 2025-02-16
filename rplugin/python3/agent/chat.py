@@ -16,8 +16,8 @@ from .llm.types import (
     InferenceConfig,
     Message,
     TextContent,
+    TextToolResult,
     ToolCall,
-    ToolResult,
 )
 from .mcp import MCPClient, get_file_system_server_params
 from .storage import ChatStorage
@@ -38,9 +38,9 @@ def last_message_contains_tool_use(messages: List[Message]) -> bool:
     last_message = messages[-1]
     content = last_message.content
     if isinstance(content, list):
-        has_tools = any(isinstance(item, (ToolResult)) for item in content)
+        has_tools = any(isinstance(item, (TextToolResult)) for item in content)
     else:
-        has_tools = isinstance(content, ToolResult)
+        has_tools = isinstance(content, TextToolResult)
 
     return has_tools
 
@@ -120,7 +120,7 @@ class ChatInterface:
         if not context_tool_calls:
             return
 
-        tool_results: ToolResult = []
+        tool_results: TextToolResult = []
         for tool_call in context_tool_calls:
             results = await self.mcp_client.call_tool(tool_call)
             tool_results.append(*results)
@@ -129,7 +129,7 @@ class ChatInterface:
         last_user_message = self.messages.pop()
         self.messages.extend(
             [
-                Message(role="user", content=context.get_prompt()),
+                Message(role="user", content=[TextContent(text=context.get_prompt())]),
                 Message(role="assistant", content=assistant_content),
                 Message(role="user", content=tool_results),
                 last_user_message,
@@ -142,7 +142,7 @@ class ChatInterface:
         self._save_current_conversation()
         self.view.update_display(self.messages)
 
-    def _finalize_messages(self, assistant_content: List[ContentType], tool_results=List[ToolResult]):
+    def _finalize_messages(self, assistant_content: List[ContentType], tool_results=List[TextToolResult]):
         messages = []
         if assistant_content:
             messages.append(Message(role="assistant", content=assistant_content))
@@ -157,7 +157,7 @@ class ChatInterface:
         message = self.view.get_input_contents()
         if message:
             self.view.clear_input()
-            self._add_messages([Message(role="user", content=message)])
+            self._add_messages([Message(role="user", content=[TextContent(text=message)])])
 
     def _schedule_coroutine(
         self,
@@ -229,13 +229,13 @@ class ChatInterface:
             tools = await self.mcp_client.get_available_tools()
             event_stream = self.llm_provider.async_complete_stream(messages=self.messages, tools=tools, config=config)
             tool_results, assistant_content = [], []
-            assistant_message = Message(role="assistant", content="")
+            assistant_message = Message(role="assistant", content=[TextContent(text="")])
             self.nvim.async_call(self.view.begin_streaming)
             async for event in event_stream:
                 if self.messages[-1].role == "user":
                     self.messages.append(assistant_message)
                 if isinstance(event, TextContent):
-                    assistant_message.content += event.text
+                    assistant_message.content[0].text += event.text
                     self.nvim.async_call(self.view.update_display, self.messages)
                 elif isinstance(event, ToolCall):
                     assistant_content.append(event)

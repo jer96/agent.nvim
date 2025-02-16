@@ -1,5 +1,5 @@
 import uuid
-from abc import ABC
+from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Union
 
@@ -12,6 +12,12 @@ from .constants import (
     TEMPERATURE,
     create_file_context_prompt,
 )
+
+
+class CustomBaseModel(BaseModel, ABC):
+    @abstractmethod
+    def bedrock_model_dump(self):
+        pass
 
 
 class Tool(BaseModel):
@@ -31,7 +37,7 @@ class InferenceConfig(BaseModel):
     model: str | None = None
 
 
-class ToolCall(BaseModel):
+class ToolCall(CustomBaseModel):
     """Represents a tool call made by the LLM."""
 
     type: str = "tool_use"
@@ -39,8 +45,17 @@ class ToolCall(BaseModel):
     name: str
     input: Dict[str, Any]
 
+    def bedrock_model_dump(self):
+        return {
+            "toolUse": {
+                "toolUseId": self.id,
+                "name": self.name,
+                "input": self.input,
+            }
+        }
 
-class ToolResult(BaseModel, ABC):
+
+class TextToolResult(CustomBaseModel):
     """Represents the result of a tool call."""
 
     type: str = "tool_result"
@@ -48,15 +63,27 @@ class ToolResult(BaseModel, ABC):
     is_error: bool = False
     content: str
 
+    def bedrock_model_dump(self):
+        return {
+            "toolResult": {
+                "toolUseId": self.tool_use_id,
+                "status": "error" if self.is_error else "success",
+                "content": [{"text": self.content}],
+            }
+        }
 
-class TextContent(BaseModel):
+
+class TextContent(CustomBaseModel):
     """Represents a text response from the LLM."""
 
     type: str = "text"
     text: str
 
+    def bedrock_model_dump(self):
+        return {"text": self.text}
 
-ContentType = Union[str, TextContent, ToolCall, ToolResult]
+
+ContentType = Union[TextContent, ToolCall, TextToolResult]
 
 
 class CompletionResponse(BaseModel):

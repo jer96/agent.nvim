@@ -5,8 +5,8 @@ from ..llm.types import (
     ContentType,
     Message,
     TextContent,
+    TextToolResult,
     ToolCall,
-    ToolResult,
 )
 
 
@@ -45,7 +45,7 @@ class MessageFormatter:
             return self._format_text(content.text)
         elif isinstance(content, ToolCall):
             return self._format_tool_call(content)
-        elif isinstance(content, ToolResult):
+        elif isinstance(content, TextToolResult):
             return self._format_tool_result(content)
         elif isinstance(content, List):
             list_content = []
@@ -71,7 +71,7 @@ class MessageFormatter:
         lines.extend(["```", ""])
         return lines
 
-    def _format_tool_result(self, result: ToolResult) -> List[str]:
+    def _format_tool_result(self, result: TextToolResult) -> List[str]:
         """Format a tool result with proper markdown formatting."""
         lines = ["### TOOL RESULT", "", f"> Error: {result.is_error}", ""]
         lines.extend(self._format_text(result.content))

@@ -2,7 +2,7 @@ import logging
 from typing import Callable, Dict, List, Optional
 
 from ..context import AgentContext
-from ..llm.types import Message, ToolCall, ToolResult
+from ..llm.types import Message, TextToolResult, ToolCall
 from .handlers import EditFileHandler, ToolHandler
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ class ToolRegistry:
         def handle_tool_content(content):
             if isinstance(content, ToolCall):
                 self._handle_tool_call(content)
-            elif isinstance(content, ToolResult):
+            elif isinstance(content, TextToolResult):
                 self._handle_tool_result(content)
             elif isinstance(content, List):
                 for c in content:
@@ -66,7 +66,7 @@ class ToolRegistry:
             return handler.handle_call(tool_call)
         return None
 
-    def _handle_tool_result(self, tool_result: ToolResult) -> Optional[Dict]:
+    def _handle_tool_result(self, tool_result: TextToolResult) -> Optional[Dict]:
         """Process a tool result using the appropriate handler"""
         # Find handler that can handle this result
         for handler in self._handlers.values():

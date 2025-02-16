@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Dict
 
 from ...context import AgentContext
-from ...llm.types import ToolCall, ToolResult
+from ...llm.types import TextToolResult, ToolCall
 
 
 class ToolHandler(ABC):
@@ -29,7 +29,7 @@ class ToolHandler(ABC):
         pass
 
     @abstractmethod
-    def can_handle_result(self, tool_result: ToolResult) -> bool:
+    def can_handle_result(self, tool_result: TextToolResult) -> bool:
         """Check if this handler can process the given tool result"""
         pass
 
@@ -43,7 +43,7 @@ class ToolHandler(ABC):
         pass
 
     @abstractmethod
-    def handle_result(self, tool_result: ToolResult) -> None:
+    def handle_result(self, tool_result: TextToolResult) -> None:
         """Handle the tool result
 
         Returns:
