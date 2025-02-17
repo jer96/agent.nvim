@@ -2,6 +2,7 @@ import asyncio
 import logging
 import uuid
 from functools import partial
+from queue import Queue
 from typing import Any, Awaitable, Callable, List, TypeVar
 
 import pynvim
@@ -23,6 +24,7 @@ from .mcp import MCPClient, get_file_system_server_params
 from .storage import ChatStorage
 from .tools import ToolRegistry
 from .ui import ChatView
+from .ui.events import UIEvent, UIEventType
 
 logger = logging.getLogger(__name__)
 
@@ -58,28 +60,33 @@ class ChatInterface:
         self.current_conversation_id: str | None = None
         self.messages: List[Message] = []
         self.llm_provider = LLMProviderFactory.create(self.nvim)
-        self.view = ChatView(self.nvim)
+        self.event_queue = Queue()
+        self.view = ChatView(self.nvim, self.event_queue)
         self.storage = ChatStorage(self.nvim)
         self.tool_registry = ToolRegistry(self.context)
         self.mcp_client = MCPClient(self._get_mcp_server_params(), self.nvim.loop)
         self.mcp_client.start()
+        self.view.start()
+
+    def _emit(self, event_type: UIEventType, **kwargs):
+        self.event_queue.put(UIEvent(type=event_type, **kwargs))
 
     def show_chat(self):
         self.is_active = True
-        self.view.show()
+        self._emit(UIEventType.SHOW)
 
     def close_chat(self):
         self.is_active = False
-        self.view.close()
+        self._emit(UIEventType.CLOSE)
 
     def clean_chat(self):
         self.close_chat()
-        self.view.delete_buffers()
+        self._emit(UIEventType.DELETE_BUFFERS)
         self.messages = []
         self._start_new_conversation()
 
     def start_conversation(self):
-        self.view.refresh_buffers()
+        self._emit(UIEventType.REFRESH_BUFFERS)
         self.messages = []
         self._start_new_conversation()
 
@@ -104,43 +111,47 @@ class ChatInterface:
         self.messages = loaded_messages
         self.current_conversation_id = conversation_id
 
-        # Make sure chat interface is visible and updated
         self.is_active = True
-        self.view.show()
-        self.view.update_display(self.messages)
-        self.view.focus_chat_window()
+        self._emit(UIEventType.SHOW)
+        self._emit(UIEventType.UPDATE_MESSAGES, messages=self.messages)
+        self._emit(UIEventType.FOCUS_CHAT)
 
         return True
 
-    async def _attach_context(self, context: FileContext):
+    async def _attach_user_message_with_context(self, user_message: str | None, context: FileContext):
         if last_message_contains_tool_use(self.messages):
             return
 
+        messages = []
+        if user_message:
+            messages.append(Message(role="user", content=[TextContent(text=user_message)]))
+
         context_tool_calls = context.get_read_file_tool_calls()
-        if not context_tool_calls:
-            return
+        if context_tool_calls:
+            tool_results: TextToolResult = []
+            for tool_call in context_tool_calls:
+                results = await self.mcp_client.call_tool(tool_call)
+                tool_results.append(*results)
 
-        tool_results: TextToolResult = []
-        for tool_call in context_tool_calls:
-            results = await self.mcp_client.call_tool(tool_call)
-            tool_results.append(*results)
+            assistant_content = [TextContent(text=ASSISTANT_READ_FILES_PROMPT), *context_tool_calls]
+            last_user_message = messages.pop()
+            messages.extend(
+                [
+                    Message(role="user", content=[TextContent(text=context.get_prompt())]),
+                    Message(role="assistant", content=assistant_content),
+                    Message(role="user", content=tool_results),
+                    last_user_message,
+                ],
+            )
 
-        assistant_content = [TextContent(text=ASSISTANT_READ_FILES_PROMPT), *context_tool_calls]
-        last_user_message = self.messages.pop()
-        self.messages.extend(
-            [
-                Message(role="user", content=[TextContent(text=context.get_prompt())]),
-                Message(role="assistant", content=assistant_content),
-                Message(role="user", content=tool_results),
-                last_user_message,
-            ],
-        )
+        self._add_messages(messages)
 
     def _add_messages(self, messages: List[Message]):
         """Add messages to the conversation and update display."""
-        self.messages.extend(messages)
-        self._save_current_conversation()
-        self.view.update_display(self.messages)
+        if messages:
+            self.messages.extend(messages)
+            self._save_current_conversation()
+            self._emit(UIEventType.UPDATE_MESSAGES, messages=self.messages)
 
     def _finalize_messages(self, assistant_content: List[ContentType], tool_results=List[TextToolResult]):
         messages = []
@@ -150,14 +161,14 @@ class ChatInterface:
             messages.append(Message(role="user", content=tool_results))
         return messages
 
-    def _handle_user_input(self):
+    def _handle_user_input(self) -> str | None:
         if self.current_conversation_id is None:
             self._start_new_conversation()
 
         message = self.view.get_input_contents()
         if message:
-            self.view.clear_input()
-            self._add_messages([Message(role="user", content=[TextContent(text=message)])])
+            self._emit(UIEventType.CLEAR_INPUT)
+        return message
 
     def _schedule_coroutine(
         self,
@@ -194,13 +205,13 @@ class ChatInterface:
         self.nvim.async_call(lambda: [f() for f in funcs_to_call])
 
     def send_message(self):
-        self._handle_user_input()
+        user_message = self._handle_user_input()
         system_prompt = self.context.get_system_prompt_with_context()
         context = self.context.get_file_context()
         config = InferenceConfig(system_prompt=system_prompt)
 
         async def mcp_send() -> List[Message]:
-            await self._attach_context(context)
+            await self._attach_user_message_with_context(user_message, context)
             tools = await self.mcp_client.get_available_tools()
             response: CompletionResponse = await self.llm_provider.async_complete(
                 messages=self.messages, tools=tools, config=config
@@ -212,37 +223,40 @@ class ChatInterface:
                 elif isinstance(content, ToolCall):
                     assistant_content.append(content)
                     results = await self.mcp_client.call_tool(content)
-                    tool_results.append(*results)
+                    tool_results.extend(results)
             return self._finalize_messages(assistant_content, tool_results)
 
         done_callback = partial(self._mcp_send_on_complete, stream=False)
         self._schedule_coroutine(mcp_send, done_callback)
 
     def send_message_stream(self):
-        self._handle_user_input()
+        user_message = self._handle_user_input()
         system_prompt = self.context.get_system_prompt_with_context()
         context = self.context.get_file_context()
         config = InferenceConfig(system_prompt=system_prompt)
 
         async def mcp_send_stream():
-            await self._attach_context(context)
+            await self._attach_user_message_with_context(user_message, context)
             tools = await self.mcp_client.get_available_tools()
             event_stream = self.llm_provider.async_complete_stream(messages=self.messages, tools=tools, config=config)
             tool_results, assistant_content = [], []
             assistant_message = Message(role="assistant", content=[TextContent(text="")])
-            self.nvim.async_call(self.view.begin_streaming)
             async for event in event_stream:
                 if self.messages[-1].role == "user":
                     self.messages.append(assistant_message)
                 if isinstance(event, TextContent):
                     assistant_message.content[0].text += event.text
-                    self.nvim.async_call(self.view.update_display, self.messages)
+                    self._emit(UIEventType.UPDATE_MESSAGES, messages=self.messages, is_stream=True)
                 elif isinstance(event, ToolCall):
                     assistant_content.append(event)
                     results = await self.mcp_client.call_tool(event)
-                    tool_results.append(*results)
-            self.nvim.async_call(self.view.end_streaming)
+                    tool_results.extend(results)
             return self._finalize_messages(assistant_content, tool_results)
 
         done_callback = partial(self._mcp_send_on_complete, stream=True)
         self._schedule_coroutine(mcp_send_stream, done_callback)
+
+    def cleanup(self):
+        """Cleanup resources when the plugin is unloaded"""
+        self.view.cleanup()
+        self.mcp_client.stop()

@@ -68,7 +68,7 @@ FILE_PROMPT = """
     <active>{{ACTIVE}}</active>
 </file>
 """
-ASSISTANT_READ_FILES_PROMPT = "I'll read the files you've provided."
+ASSISTANT_READ_FILES_PROMPT = "I'll read the files you've provided.\n"
 
 
 def create_file_context_prompt(file_path: str, active: bool = False):

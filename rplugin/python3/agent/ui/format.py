@@ -71,6 +71,12 @@ class MessageFormatter:
     def _format_tool_result(self, result: TextToolResult) -> List[str]:
         """Format a tool result with proper markdown formatting."""
         status_emoji = "❌" if result.is_error else "✅"
-        lines = ["⚡ TOOL RESULT ⚡", "", f"{status_emoji} Status: {'Error' if result.is_error else 'Success'}", ""]
+        lines = [
+            "⚡ TOOL RESULT ⚡",
+            "",
+            f"{status_emoji} Status: {
+                'Error' if result.is_error else 'Success'}",
+            "",
+        ]
         lines.extend(self._format_text(result.content))
         return lines
