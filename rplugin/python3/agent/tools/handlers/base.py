@@ -23,24 +23,17 @@ class ToolHandler(ABC):
         """The name of the tool this handler manages"""
         pass
 
-    @abstractmethod
     def can_handle_call(self, tool_call: ToolCall) -> bool:
         """Check if this handler can process the given tool call"""
-        pass
+        return tool_call.name == self.name
 
-    @abstractmethod
     def can_handle_result(self, tool_result: TextToolResult) -> bool:
         """Check if this handler can process the given tool result"""
-        pass
+        return tool_result.tool_use_id in self._tool_use_map
 
-    @abstractmethod
     def handle_call(self, tool_call: ToolCall) -> None:
-        """Handle the tool call
-
-        Returns:
-            Dict containing handler-specific data and any required UI actions
-        """
-        pass
+        """Handle the tool call"""
+        self._tool_use_map[tool_call.id] = tool_call
 
     @abstractmethod
     def handle_result(self, tool_result: TextToolResult) -> None:

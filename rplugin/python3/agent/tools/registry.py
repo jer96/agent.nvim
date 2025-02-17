@@ -3,7 +3,7 @@ from typing import Callable, Dict, List, Optional
 
 from ..context import AgentContext
 from ..llm.types import Message, TextToolResult, ToolCall
-from .handlers import EditFileHandler, ToolHandler
+from .handlers import EditFileHandler, ToolHandler, WriteFileHandler
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +12,7 @@ HandlerFactory = Callable[[AgentContext], ToolHandler]
 
 DEFAULT_HANDLER_FACTORIES: List[HandlerFactory] = [
     lambda context: EditFileHandler(context),
+    lambda context: WriteFileHandler(context),
 ]
 
 

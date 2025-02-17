@@ -35,6 +35,7 @@ class AgentContext:
     def _refresh_active_buffers(self):
         for buf in self.nvim.buffers:
             if buf.valid and buf.name and not self._is_ignored_buffer(buf):
+                logger.debug(f"eligible buffer: {buf.name}")
                 if buf.number not in self.active_buffers:
                     self.active_buffers[buf.number] = ContextBuf(buf)
 
