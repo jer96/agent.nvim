@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import uuid
 from functools import partial
 from queue import Queue
 from typing import Any, Awaitable, Callable, List, TypeVar
@@ -21,7 +20,6 @@ from .llm.types import (
     ToolCall,
 )
 from .mcp import MCPClient, get_file_system_server_params
-from .storage import ChatStorage
 from .tools import ToolRegistry
 from .ui import ChatView
 from .ui.events import UIEvent, UIEventType
@@ -57,12 +55,9 @@ class ChatInterface:
         self.nvim = nvim
         self.context = context
         self.is_active = False
-        self.current_conversation_id: str | None = None
-        self.messages: List[Message] = []
         self.llm_provider = LLMProviderFactory.create(self.nvim)
         self.event_queue = Queue()
         self.view = ChatView(self.nvim, self.event_queue)
-        self.storage = ChatStorage(self.nvim)
         self.tool_registry = ToolRegistry(self.context)
         self.mcp_client = MCPClient(self._get_mcp_server_params(), self.nvim.loop)
         self.mcp_client.start()
@@ -82,12 +77,10 @@ class ChatInterface:
     def clean_chat(self):
         self.close_chat()
         self._emit(UIEventType.DELETE_BUFFERS)
-        self.messages = []
         self._start_new_conversation()
 
     def start_conversation(self):
         self._emit(UIEventType.REFRESH_BUFFERS)
-        self.messages = []
         self._start_new_conversation()
 
     def _get_mcp_server_params(self):
@@ -95,36 +88,27 @@ class ChatInterface:
         return [file_system_server_params]
 
     def _start_new_conversation(self):
-        self.current_conversation_id = str(uuid.uuid4())
-        self._save_current_conversation()
-
-    def _save_current_conversation(self):
-        if self.current_conversation_id and self.messages:
-            self.storage.save_conversation(self.current_conversation_id, self.messages)
+        self.context.start_new_conversation()
 
     def load_conversation(self, conversation_id: str) -> bool:
         """Load a specific conversation."""
-        loaded_messages = self.storage.load_conversation(conversation_id)
-        if not loaded_messages:
-            return False
-
-        self.messages = loaded_messages
-        self.current_conversation_id = conversation_id
-
-        self.is_active = True
-        self._emit(UIEventType.SHOW)
-        self._emit(UIEventType.UPDATE_MESSAGES, messages=self.messages)
-        self._emit(UIEventType.FOCUS_CHAT)
-
-        return True
+        if self.context.load_conversation(conversation_id):
+            self.is_active = True
+            self._emit(UIEventType.SHOW)
+            self._emit(UIEventType.MESSAGES_EVENT, messages=self.context.messages)
+            self._emit(UIEventType.FOCUS_CHAT)
+            return True
+        return False
 
     async def _attach_user_message_with_context(self, user_message: str | None, context: FileContext):
-        if last_message_contains_tool_use(self.messages):
+        if last_message_contains_tool_use(self.context.messages):
             return
 
         messages = []
         if user_message:
-            messages.append(Message(role="user", content=[TextContent(text=user_message)]))
+            user_msg = Message(role="user", content=[TextContent(text=user_message)])
+            self._emit(UIEventType.MESSAGES_EVENT, messages=[user_msg])
+            messages.append(user_msg)
 
         context_tool_calls = context.get_read_file_tool_calls()
         if context_tool_calls:
@@ -149,9 +133,7 @@ class ChatInterface:
     def _add_messages(self, messages: List[Message]):
         """Add messages to the conversation and update display."""
         if messages:
-            self.messages.extend(messages)
-            self._save_current_conversation()
-            self._emit(UIEventType.UPDATE_MESSAGES, messages=self.messages)
+            self.context.add_messages(messages)
 
     def _finalize_messages(self, assistant_content: List[ContentType], tool_results=List[TextToolResult]):
         messages = []
@@ -162,7 +144,7 @@ class ChatInterface:
         return messages
 
     def _handle_user_input(self) -> str | None:
-        if self.current_conversation_id is None:
+        if self.context.conversation_id is None:
             self._start_new_conversation()
 
         message = self.view.get_input_contents()
@@ -214,16 +196,18 @@ class ChatInterface:
             await self._attach_user_message_with_context(user_message, context)
             tools = await self.mcp_client.get_available_tools()
             response: CompletionResponse = await self.llm_provider.async_complete(
-                messages=self.messages, tools=tools, config=config
+                messages=self.context.messages, tools=tools, config=config
             )
             tool_results, assistant_content = [], []
             for content in response.content:
                 if isinstance(content, TextContent):
                     assistant_content.append(content)
+                    self._emit(UIEventType.MESSAGES_EVENT, messages=[Message(role="assistant", content=[content])])
                 elif isinstance(content, ToolCall):
                     assistant_content.append(content)
                     results = await self.mcp_client.call_tool(content)
                     tool_results.extend(results)
+                    self._emit(UIEventType.TOOL_BATCH, tool_batch=[content, *results])
             return self._finalize_messages(assistant_content, tool_results)
 
         done_callback = partial(self._mcp_send_on_complete, stream=False)
@@ -238,19 +222,36 @@ class ChatInterface:
         async def mcp_send_stream():
             await self._attach_user_message_with_context(user_message, context)
             tools = await self.mcp_client.get_available_tools()
-            event_stream = self.llm_provider.async_complete_stream(messages=self.messages, tools=tools, config=config)
-            tool_results, assistant_content = [], []
-            assistant_message = Message(role="assistant", content=[TextContent(text="")])
+            event_stream = self.llm_provider.async_complete_stream(
+                messages=self.context.messages, tools=tools, config=config
+            )
+
+            assistant_content, tool_results = [], []
+            content_idx, last_content_idx = -1, -1
+            assistant_text_content = None
+
             async for event in event_stream:
-                if self.messages[-1].role == "user":
-                    self.messages.append(assistant_message)
                 if isinstance(event, TextContent):
-                    assistant_message.content[0].text += event.text
-                    self._emit(UIEventType.UPDATE_MESSAGES, messages=self.messages, is_stream=True)
+                    if assistant_text_content is None:
+                        self._emit(UIEventType.MESSAGE_STREAM_START)
+                        content_idx += 1
+                        assistant_text_content = TextContent(text="")
+                        assistant_content.append(assistant_text_content)
+                    self._emit(UIEventType.MESSAGE_STREAM_EVENT, text=event.text)
+                    assistant_content[content_idx].text += event.text
                 elif isinstance(event, ToolCall):
+                    if content_idx >= 0 and content_idx > last_content_idx:
+                        self._emit(UIEventType.MESSAGE_STREAM_STOP)
+                        last_content_idx = content_idx
+                        assistant_text_content = None
                     assistant_content.append(event)
                     results = await self.mcp_client.call_tool(event)
                     tool_results.extend(results)
+                    self._emit(UIEventType.TOOL_BATCH, tool_batch=[event, *results])
+            if content_idx >= 0 and content_idx > last_content_idx:
+                self._emit(UIEventType.MESSAGE_STREAM_STOP)
+                last_content_idx = content_idx
+                assistant_text_content = None
             return self._finalize_messages(assistant_content, tool_results)
 
         done_callback = partial(self._mcp_send_on_complete, stream=True)

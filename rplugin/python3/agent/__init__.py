@@ -79,7 +79,7 @@ class AgentPlugin:
 
     @pynvim.function("AgentListConversations", sync=True)
     def list_conversations(self, args) -> List[Dict]:
-        conversations = self.chat_interface.storage.list_conversations()
+        conversations = self.context.storage.list_conversations()
         return [
             {
                 "id": conv.id,

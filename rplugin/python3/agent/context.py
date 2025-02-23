@@ -1,12 +1,15 @@
 import logging
+import json
 import os
+import uuid
 from typing import Dict, List
 
 import pynvim
 from pynvim.api import Buffer
 
 from .llm.constants import FILE_TREE_IGNORE_PATTERNS, SYSTEM_PROMPT
-from .llm.types import FileContext
+from .llm.types import FileContext, Message
+from .storage import ChatStorage
 
 IGNORED_BUF_FILE_TYPES = {"alpha", "unkown", "NvimTree", "TelescopePrompt", "TelescopeResult", "agent.nvim"}
 IGNORED_BUF_PATTERNS = {"agent chat", "NvimTree", "diffview", ".log", ".git"}
@@ -27,6 +30,11 @@ class AgentContext:
         self.active_buffers: Dict[int, ContextBuf] = {}
         self.additional_files: List[str] = []
         self._refresh_active_buffers()
+
+        # Conversation state
+        self.conversation_id: str | None = None
+        self.messages: List[Message] = []
+        self.storage = ChatStorage(nvim)
 
     @property
     def cwd(self) -> str:
@@ -186,3 +194,25 @@ class AgentContext:
         if bufnr in self.active_buffers:
             self.nvim.api.buf_delete(bufnr, {"force": True})
             del self.active_buffers[bufnr]
+
+    # Conversation management methods
+    def add_messages(self, messages: List[Message]):
+        """Add messages to the current conversation and save if needed"""
+        if messages:
+            self.messages.extend(messages)
+            if self.conversation_id:
+                self.storage.save_conversation(self.conversation_id, self.messages)
+
+    def start_new_conversation(self):
+        """Start a new conversation with a new ID"""
+        self.conversation_id = str(uuid.uuid4())
+        self.messages = []
+
+    def load_conversation(self, conversation_id: str) -> bool:
+        """Load a specific conversation"""
+        loaded_messages = self.storage.load_conversation(conversation_id)
+        if loaded_messages:
+            self.messages = loaded_messages
+            self.conversation_id = conversation_id
+            return True
+        return False

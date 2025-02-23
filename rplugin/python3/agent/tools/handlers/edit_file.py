@@ -16,8 +16,6 @@ class EditFileHandler(ToolHandler):
     def handle_result(self, tool_result: TextToolResult):
         tool_call = self._tool_use_map[tool_result.tool_use_id]
         logger.debug("edit_tool result")
-        logger.debug(tool_call)
-        logger.debug(tool_result)
 
         file_path = tool_call.input.get("path")
         is_dry_run = tool_call.input.get("dryRun", False)

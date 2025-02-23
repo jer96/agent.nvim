@@ -1,3 +1,4 @@
+import logging
 from queue import Empty, Queue
 from threading import Thread
 from typing import List
@@ -8,6 +9,8 @@ from ..llm.types import Message
 from .events import UIEvent, UIEventType
 from .format import MessageFormatter
 
+logger = logging.getLogger(__name__)
+
 
 class ChatView:
     def __init__(self, nvim: pynvim.Nvim, event_queue: Queue):
@@ -16,11 +19,12 @@ class ChatView:
         self.chat_buf = None
         self.input_win = None
         self.input_buf = None
-        self.last_processed_index = -1
         self.formatter = MessageFormatter()
         self.event_queue = event_queue
         self.stream_start_line = None
-        self.stream_message_index = None
+        self.stream_end_line = None
+        self.stream_end_line = None
+        self.stream_text = ""
 
     @property
     def is_valid(self) -> bool:
@@ -95,6 +99,7 @@ class ChatView:
 
     def show(self):
         """Show or restore the chat interface"""
+
         chat_win_valid = self.chat_win and self.chat_win.valid
         input_win_valid = self.input_win and self.input_win.valid
         if chat_win_valid and input_win_valid:
@@ -127,7 +132,6 @@ class ChatView:
             self.nvim.api.buf_delete(self.input_buf, {"force": True})
         self.chat_buf = None
         self.input_buf = None
-        self.last_processed_index = -1
 
     def _format_message(self, message: Message, window_width: int) -> List[str]:
         """Format a single message into displayable lines using MessageFormatter."""
@@ -149,66 +153,6 @@ class ChatView:
             lines.extend(message_lines)
         return lines
 
-    def _handle_streaming_message(self, messages: List[Message], window_width: int):
-        """Handle message updates in streaming mode."""
-        message_index = len(messages) - 1
-
-        # Handle any unprocessed messages before the streaming message
-        if self.last_processed_index < message_index - 1:
-            current_line_count = len(self.chat_buf)
-            intermediate_lines = self._process_messages(
-                messages, self.last_processed_index + 1, message_index, window_width
-            )
-            if intermediate_lines:
-                self._update_buffer(intermediate_lines, current_line_count, current_line_count)
-                self.stream_start_line = len(self.chat_buf)
-
-        # Handle the streaming message
-        last_message = messages[message_index]
-        display_lines = self._format_message(last_message, window_width)
-
-        if message_index != self.stream_message_index:
-            # First time seeing this message, append it
-            current_line_count = len(self.chat_buf)
-            self._update_buffer(display_lines, current_line_count, current_line_count)
-            self.stream_start_line = current_line_count
-            self.stream_message_index = message_index
-            self.last_processed_index = message_index
-        else:
-            # Update existing message in place
-            if self.stream_start_line is not None:
-                self._update_buffer(display_lines, self.stream_start_line, len(self.chat_buf))
-
-        self._toggle_markdown_rendering(False)
-
-    def _handle_normal_update(self, messages: List[Message], window_width: int):
-        """Handle message updates in normal (non-streaming) mode."""
-        current_line_count = len(self.chat_buf)
-        new_lines = self._process_messages(messages, self.last_processed_index + 1, len(messages), window_width)
-
-        if new_lines:
-            self._update_buffer(new_lines, current_line_count, current_line_count)
-            self.last_processed_index = len(messages) - 1
-            self._toggle_markdown_rendering(True)
-
-    def update_display(self, messages: List[Message], is_stream: bool = False):
-        """Update the chat display with the given messages"""
-        if not self.is_valid:
-            return
-
-        try:
-            window_width = self.nvim.api.win_get_width(self.chat_win)
-
-            if is_stream:
-                self._handle_streaming_message(messages, window_width)
-            else:
-                self._handle_normal_update(messages, window_width)
-
-            self.chat_win.cursor = (len(self.chat_buf), 0)
-
-        except Exception as e:
-            self.nvim.err_write(f"agent.nvim display update failed: {str(e)}\n")
-
     def get_input_contents(self) -> str | None:
         """Get the contents of the input buffer"""
         if not self.input_buf or not self.input_buf.valid:
@@ -225,13 +169,8 @@ class ChatView:
 
     def focus_chat_window(self):
         """Focus the chat window"""
-        self._toggle_markdown_rendering(True)
         self.nvim.current.window = self.chat_win
 
-    def _toggle_markdown_rendering(self, enable: bool):
-        """Toggle markdown rendering in the chat buffer."""
-        command = "enable" if enable else "disable"
-        self.nvim.command(f"RenderMarkdown {command}")
 
     def refresh_buffers(self):
         """Empty both chat and input buffers and reset processing state."""
@@ -241,9 +180,7 @@ class ChatView:
         if self.input_buf and self.input_buf.valid:
             self.clear_input()
 
-        self.last_processed_index = -1
         self.stream_start_line = None
-        self.stream_message_index = None
 
     def resize_windows(self):
         if not self.is_valid:
@@ -271,31 +208,125 @@ class ChatView:
         self.event_thread = Thread(target=event_loop, daemon=True)
         self.event_thread.start()
 
-    def _handle_event(self, event: UIEvent):
-        """Handle incoming UI events"""
+    def _handle_messages_event(self, messages: List[Message]) -> None:
+        """Handle a complete message event."""
+        if not messages:
+            return
+
+        window_width = self.nvim.api.win_get_width(self.chat_win)
+        current_line_count = len(self.chat_buf)
+
+        for message in messages:
+            lines = self._format_message(message, window_width)
+            if lines:
+                # Follow the same pattern as _handle_lines
+                if current_line_count > 0:
+                    lines.insert(0, "")
+                self._update_buffer(lines, current_line_count, current_line_count)
+                current_line_count = len(self.chat_buf)
+
+        self._move_chat_cursor()
+
+    def _handle_stream_start(self) -> None:
+        """Handle the start of a streaming message."""
+        current_line_count = len(self.chat_buf)
+        self.stream_start_line = current_line_count
+        self.stream_end_line = current_line_count
+        self.stream_text = ""
+        self.nvim.command('RenderMarkdown disable')
+
+    def _handle_stream_stop(self) -> None:
+        """Handle the end of a streaming message."""
+        # Re-enable markdown rendering first
+        self.nvim.command('RenderMarkdown enable')
+
+        # Reset streaming state
+        self.stream_start_line = None
+        self.stream_end_line = None
+        self.stream_text = ""
+
+        # Update cursor
+        self._move_chat_cursor()
+
+    def _handle_stream_event(self, text: str) -> None:
+        """Handle a streaming message event."""
+        if not text or not self.is_valid:
+            return
+
         try:
-            if event.type == UIEventType.UPDATE_MESSAGES:
-                if event.messages:
-                    self.update_display(event.messages, event.is_stream)
-            elif event.type == UIEventType.CLEAR_INPUT:
-                self.clear_input()
-            elif event.type == UIEventType.CLOSE:
-                self.close()
-            elif event.type == UIEventType.DELETE_BUFFERS:
-                self.delete_buffers()
-            elif event.type == UIEventType.REFRESH_BUFFERS:
-                self.refresh_buffers()
-            elif event.type == UIEventType.SHOW:
-                self.show()
-            elif event.type == UIEventType.RESIZE:
-                self.resize_windows()
-            elif event.type == UIEventType.FOCUS_CHAT:
-                self.focus_chat_window()
-        except Exception as e:
-            self.nvim.err_write(
-                f"Error handling event {
-                    event.type}: {str(e)}\n"
-            )
+            # Update stream content and format using the formatter
+            self.stream_text += text
+            window_width = self.nvim.api.win_get_width(self.chat_win)
+            new_lines = self.formatter.format_stream_content(self.stream_text, window_width)
+
+            # Update buffer content
+            if self.stream_start_line is not None:
+                # Update the entire streaming message content
+                self._update_buffer(new_lines, self.stream_start_line, self.stream_end_line)
+                self.stream_end_line = self.stream_start_line + len(new_lines)
+                self._move_chat_cursor()
+        except Exception:
+            logger.exception("Error in stream content handler")
+
+
+    def _handle_tool_call_event(self, tool_call) -> None:
+        """Handle a tool call event."""
+        if self.stream_start_line is None:
+            self._handle_stream_start()
+
+        lines = self.formatter.format_content(tool_call)
+        self._handle_lines(lines)
+
+    def _handle_tool_result_event(self, tool_result) -> None:
+        """Handle a tool result event."""
+        lines = self.formatter.format_content(tool_result)
+        self._handle_lines(lines)
+
+    def _handle_tool_batch_event(self, tool_batch) -> None:
+        """Handle a batched tool call and results event."""
+        for tool in tool_batch:
+            lines = self.formatter.format_content(tool)
+            self._handle_lines(lines)
+
+
+    def _handle_lines(self, lines: list[str]):
+        current_line_count = len(self.chat_buf)
+        self._update_buffer(lines, current_line_count, current_line_count)
+        self._move_chat_cursor()
+
+    def _move_chat_cursor(self):
+        """Update the cursor position"""
+        self.chat_win.cursor = (len(self.chat_buf), 0)
+
+
+    def _handle_event(self, event: UIEvent) -> None:
+        """Handle incoming UI events."""
+        logger.debug(f"handling: {event.type}")
+        try:
+            event_handlers = {
+                UIEventType.MESSAGES_EVENT: lambda: self._handle_messages_event(event.messages),
+                UIEventType.MESSAGE_STREAM_START: self._handle_stream_start,
+                UIEventType.MESSAGE_STREAM_EVENT: lambda: self._handle_stream_event(event.text),
+                UIEventType.MESSAGE_STREAM_STOP: self._handle_stream_stop,
+                UIEventType.TOOL_CALL: lambda: self._handle_tool_call_event(event.tool_call),
+                UIEventType.TOOL_RESULT: lambda: self._handle_tool_result_event(event.tool_result),
+                UIEventType.TOOL_BATCH: lambda: self._handle_tool_batch_event(event.tool_batch),
+                UIEventType.CLEAR_INPUT: self.clear_input,
+                UIEventType.CLOSE: self.close,
+                UIEventType.DELETE_BUFFERS: self.delete_buffers,
+                UIEventType.REFRESH_BUFFERS: self.refresh_buffers,
+                UIEventType.SHOW: self.show,
+                UIEventType.RESIZE: self.resize_windows,
+                UIEventType.FOCUS_CHAT: self.focus_chat_window,
+            }
+            handler = event_handlers.get(event.type)
+            if handler:
+                handler()
+
+        except Exception:
+            logger.exception("Error handling event")
+
+
 
     def cleanup(self):
         """Cleanup resources when the plugin is unloaded"""
