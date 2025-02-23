@@ -252,6 +252,7 @@ class ChatView:
         """Handle a streaming message event."""
         if not text or not self.is_valid:
             return
+        logger.debug(f"strem event: {text}")
 
         try:
             # Update stream content and format using the formatter
@@ -294,9 +295,9 @@ class ChatView:
         self._update_buffer(lines, current_line_count, current_line_count)
         self._move_chat_cursor()
 
-    def _move_chat_cursor(self):
+    def _move_chat_cursor(self, pos: tuple[int, int] = None):
         """Update the cursor position"""
-        self.chat_win.cursor = (len(self.chat_buf), 0)
+        self.chat_win.cursor = pos or (len(self.chat_buf), 0)
 
 
     def _handle_event(self, event: UIEvent) -> None:
@@ -325,8 +326,6 @@ class ChatView:
 
         except Exception:
             logger.exception("Error handling event")
-
-
 
     def cleanup(self):
         """Cleanup resources when the plugin is unloaded"""

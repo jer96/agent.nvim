@@ -80,11 +80,10 @@ class MessageFormatter:
 
     def _format_role_header(self, role: str) -> List[str]:
         """Format the role header with proper padding and styling."""
-        role_upper = role.upper()
-        # Use different emojis for different roles
-        emoji = "💬" if role.lower() == "user" else "🤖"
-        # Left align with single emoji
-        line = f"{emoji} {role_upper}"
+        if role.lower() == "user":
+            line = "💬 User"
+        else:
+            line = "🤖 Agent"
         return [line, ""]
 
     def format_content(self, content: ContentType | List[ContentType]) -> List[str]:
@@ -111,7 +110,7 @@ class MessageFormatter:
     def _format_tool_call(self, tool_call: ToolCall) -> List[str]:
         """Format a tool call with proper markdown formatting."""
         lines = [
-            "🛠️ TOOL CALL 🛠️",
+            "🛠️ Tool Call",
             "",
             f"Name: `{tool_call.name}`",
             "Input:",
@@ -122,7 +121,7 @@ class MessageFormatter:
     def _format_tool_result(self, result: TextToolResult) -> List[str]:
         """Format a tool result with proper markdown formatting."""
         lines = [
-            "📋 Tool Result:",
+            "📋 Tool Result",
             "",
         ]
         lines.extend(self._format_text(result.content))
@@ -131,23 +130,10 @@ class MessageFormatter:
     def format_stream_content(self, text: str, window_width: int) -> List[str]:
         """Format streaming content with proper role prefix."""
         # Start with the role header
-        formatted_lines = ["", "🤖 Assistant", ""]
+        formatted_lines = ["", "🤖 Agent", ""]
 
         # Split into lines and add directly
         content_lines = text.strip().splitlines()
         formatted_lines.extend(content_lines)
 
         return self.ensure_content_spacing(formatted_lines)
-
-    def format_chat_tool_call(self, tool_call: ToolCall) -> List[str]:
-        """Format a tool call for chat display."""
-        lines = [
-            "🔧 Tool Call:",
-            "",
-            f"  Name: {tool_call.name}",
-            "  Parameters:",
-        ]
-        # Format parameters as YAML-style indented list
-        for name, value in tool_call.input.items():
-            lines.append(f"    {name}: {value}")
-        return self.ensure_content_spacing(lines)
