@@ -215,3 +215,17 @@ class AgentContext:
             self.conversation_id = conversation_id
             return True
         return False
+
+    def get_messages(self, limit: int | None = None) -> List[Message]:
+        """Get messages from the conversation, optionally limited to the last N messages.
+
+        Args:
+            limit: Optional maximum number of messages to return from the end of the conversation.
+                  If None, returns all messages.
+
+        Returns:
+            List[Message]: The requested messages
+        """
+        if limit is None:
+            return self.messages
+        return self.messages[-limit:]

@@ -1,4 +1,3 @@
-import json
 from typing import List
 
 from ..llm.types import (
@@ -7,6 +6,14 @@ from ..llm.types import (
     TextContent,
     TextToolResult,
     ToolCall,
+)
+from .elements import (
+    MessageElement,
+    StreamElement,
+    TextElement,
+    ToolCallElement,
+    ToolResultElement,
+    UIElement,
 )
 
 
@@ -48,7 +55,7 @@ class MessageFormatter:
         if current_line:
             lines.append(" ".join(current_line))
 
-        return lines if lines else [text]
+        return self.ensure_content_spacing(lines if lines else [text])
 
     def ensure_content_spacing(self, lines: List[str]) -> List[str]:
         """Ensures proper spacing for any formatted content.
@@ -71,69 +78,52 @@ class MessageFormatter:
 
         return lines
 
-    def format_message(self, message: Message) -> List[str]:
+    def format_message(self, message: Message, start_line: int) -> List[UIElement]:
         """Format a complete message including role header and content."""
-        lines = []
-        lines.extend(self._format_role_header(message.role))
-        lines.extend(self.format_content(message.content))
-        return self.ensure_content_spacing(lines)
+        elements = []
 
-    def _format_role_header(self, role: str) -> List[str]:
+        # Add role header element
+        header_element = MessageElement(role=message.role, start_line=start_line)
+        elements.append(header_element)
+
+        # Add content elements
+        content_elements = self.format_content(message.content, start_line + len(header_element.lines))
+        elements.extend(content_elements)
+
+        return elements
+
+    def format_role_header(self, role: str) -> List[str]:
         """Format the role header with proper padding and styling."""
-        if role.lower() == "user":
-            line = "💬 User"
-        else:
-            line = "🤖 Agent"
-        return [line, ""]
+        return [role.capitalize(), ""]
 
-    def format_content(self, content: ContentType | List[ContentType]) -> List[str]:
-        """Format a single content item into displayable lines."""
-        if isinstance(content, str):
-            return self._format_text(content)
-        elif isinstance(content, TextContent):
-            return self._format_text(content.text)
+    def format_content(self, content: ContentType | List[ContentType], start_line: int) -> List[UIElement]:
+        """Format a single content item into UI elements."""
+        elements = []
+
+        if isinstance(content, (str, TextContent)):
+            text = content if isinstance(content, str) else content.text
+            text_lines = self.ensure_content_spacing(self._format_text(text))
+            elements.append(TextElement(text="\n".join(text_lines), start_line=start_line))
         elif isinstance(content, ToolCall):
-            return self._format_tool_call(content)
+            elements.append(ToolCallElement(tool_call=content, start_line=start_line))
         elif isinstance(content, TextToolResult):
-            return self._format_tool_result(content)
+            elements.append(ToolResultElement(result=content, start_line=start_line))
         elif isinstance(content, List):
-            list_content = []
+            current_line = start_line
             for c in content:
-                list_content.extend(self.format_content(c))
-            return list_content
-        return self._format_text(str(content))
+                content_elements = self.format_content(c, current_line)
+                elements.extend(content_elements)
+                # Update current_line based on the added elements
+                current_line += sum(len(elem.lines) for elem in content_elements)
+        else:
+            elements.append(TextElement(text=str(content), start_line=start_line))
+
+        return elements
 
     def _format_text(self, text: str) -> List[str]:
         """Format plain text content."""
         return text.strip().splitlines()
 
-    def _format_tool_call(self, tool_call: ToolCall) -> List[str]:
-        """Format a tool call with proper markdown formatting."""
-        lines = [
-            "🛠️ Tool Call",
-            "",
-            f"Name: `{tool_call.name}`",
-            "Input:",
-        ]
-        lines.extend(json.dumps(tool_call.input, indent=2).splitlines())
-        return self.ensure_content_spacing(lines)
-
-    def _format_tool_result(self, result: TextToolResult) -> List[str]:
-        """Format a tool result with proper markdown formatting."""
-        lines = [
-            "📋 Tool Result",
-            "",
-        ]
-        lines.extend(self._format_text(result.content))
-        return self.ensure_content_spacing(lines)
-
-    def format_stream_content(self, text: str, window_width: int) -> List[str]:
+    def format_stream_content(self, text: str, start_line: int) -> List[UIElement]:
         """Format streaming content with proper role prefix."""
-        # Start with the role header
-        formatted_lines = ["", "🤖 Agent", ""]
-
-        # Split into lines and add directly
-        content_lines = text.strip().splitlines()
-        formatted_lines.extend(content_lines)
-
-        return self.ensure_content_spacing(formatted_lines)
+        return [StreamElement(text=text, start_line=start_line)]

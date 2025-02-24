@@ -18,6 +18,22 @@ class AgentPlugin:
         self.chat_interface = ChatInterface(nvim, self.context)
         setup_logger()
 
+    @pynvim.function("AgentNextMessage")
+    def next_message(self, args: List[str]):
+        self.chat_interface.view.navigate_messages(forward=True)
+
+    @pynvim.function("AgentPrevMessage")
+    def prev_message(self, args: List[str]):
+        self.chat_interface.view.navigate_messages(forward=False)
+
+    @pynvim.function("AgentNextTool")
+    def next_tool(self, args: List[str]):
+        self.chat_interface.view.navigate_tools(forward=True)
+
+    @pynvim.function("AgentPrevTool")
+    def prev_tool(self, args: List[str]):
+        self.chat_interface.view.navigate_tools(forward=False)
+
     @pynvim.command("AgentToggle", sync=True)
     def toggle_chat(self):
         if self.chat_interface.is_active:

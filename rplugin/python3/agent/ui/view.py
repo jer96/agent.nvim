@@ -1,12 +1,12 @@
 import logging
 from queue import Empty, Queue
 from threading import Thread
-from typing import List
+from typing import Dict, List, Tuple
 
 import pynvim
 
-from ..llm.types import Message
-from .events import UIEvent, UIEventType
+from ..llm.types import Message, TextContent
+from .events import ToolContent, UIEvent, UIEventType
 from .format import MessageFormatter
 
 logger = logging.getLogger(__name__)
@@ -25,6 +25,9 @@ class ChatView:
         self.stream_end_line = None
         self.stream_end_line = None
         self.stream_text = ""
+        self.message_marks = {}
+        self.mark_namespace = None
+        self.tool_statuses = {}
 
     @property
     def is_valid(self) -> bool:
@@ -36,9 +39,14 @@ class ChatView:
         self._create_chat_buffers()
         self._create_chat_windows()
         self._show_chat_windows()
+        self.mark_namespace = self.nvim.api.create_namespace("agent-chat")
 
     def _set_chat_buf_keymaps(self):
         opts = {"noremap": True, "silent": True}
+        self.nvim.api.buf_set_keymap(self.chat_buf, "n", "<leader>]]", ":lua vim.fn.AgentNextMessage()<CR>", opts)
+        self.nvim.api.buf_set_keymap(self.chat_buf, "n", "<leader>[[", ":lua vim.fn.AgentPrevMessage()<CR>", opts)
+        self.nvim.api.buf_set_keymap(self.chat_buf, "n", "]t", ":lua vim.fn.AgentNextTool()<CR>", opts)
+        self.nvim.api.buf_set_keymap(self.chat_buf, "n", "[t", ":lua vim.fn.AgentPrevTool()<CR>", opts)
         self.nvim.api.buf_set_keymap(self.input_buf, "n", "<CR>", ":lua vim.fn.AgentSendStream()<CR>", opts)
         self.nvim.api.buf_set_keymap(self.input_buf, "i", "<C-s>", "<Esc>:lua vim.fn.AgentSendStream()<CR>", opts)
         self.nvim.api.buf_set_keymap(self.input_buf, "n", "ss", "<Esc>:lua vim.fn.AgentSend()<CR>", opts)
@@ -55,6 +63,8 @@ class ChatView:
         self.chat_buf.options["buftype"] = "nofile"
         self.chat_buf.options["modifiable"] = False
         self.chat_buf.options["filetype"] = "markdown"
+        self.chat_buf.options["foldmethod"] = "marker"
+        self.chat_buf.options["foldenable"] = True
 
         self.input_buf = self.nvim.api.create_buf(False, True)
         self.input_buf.options["buftype"] = "nofile"
@@ -76,21 +86,29 @@ class ChatView:
         self.nvim.current.buffer = self.input_buf
 
     def _show_chat_windows(self):
-        win_config = {
+        # Chat window specific configuration
+        chat_win_config = {
             "number": False,
             "relativenumber": False,
             "wrap": True,
-            "signcolumn": "no",
+            "signcolumn": "yes",
+            "foldmethod": "marker",
+            "foldcolumn": "1",
+            "foldenable": True,
         }
 
         input_win_config = {
             "winfixheight": True,
+            "signcolumn": "no",
+            "number": False,
+            "relativenumber": False,
         }
 
-        for win in [self.chat_win, self.input_win]:
-            for option, value in win_config.items():
-                win.options[option] = value
+        # Apply chat window configuration
+        for option, value in chat_win_config.items():
+            self.chat_win.options[option] = value
 
+        # Apply input window configuration
         for option, value in input_win_config.items():
             self.input_win.options[option] = value
 
@@ -133,11 +151,6 @@ class ChatView:
         self.chat_buf = None
         self.input_buf = None
 
-    def _format_message(self, message: Message, window_width: int) -> List[str]:
-        """Format a single message into displayable lines using MessageFormatter."""
-        self.formatter.window_width = window_width
-        return self.formatter.format_message(message)
-
     def _update_buffer(self, lines: List[str], start: int, end: int):
         """Helper to update buffer content while preserving state"""
         self.chat_buf.options["modifiable"] = True
@@ -149,7 +162,8 @@ class ChatView:
         lines = []
         for i in range(start_idx, end_idx):
             message = messages[i]
-            message_lines = self._format_message(message, window_width)
+            self.formatter.window_width = window_width
+            message_lines, _ = self.formatter.format_message(message)
             lines.extend(message_lines)
         return lines
 
@@ -170,7 +184,6 @@ class ChatView:
     def focus_chat_window(self):
         """Focus the chat window"""
         self.nvim.current.window = self.chat_win
-
 
     def refresh_buffers(self):
         """Empty both chat and input buffers and reset processing state."""
@@ -214,31 +227,122 @@ class ChatView:
             return
 
         window_width = self.nvim.api.win_get_width(self.chat_win)
-        current_line_count = len(self.chat_buf)
+        start_line = len(self.chat_buf)
 
         for message in messages:
-            lines = self._format_message(message, window_width)
-            if lines:
-                # Follow the same pattern as _handle_lines
-                if current_line_count > 0:
-                    lines.insert(0, "")
-                self._update_buffer(lines, current_line_count, current_line_count)
-                current_line_count = len(self.chat_buf)
+            self.formatter.window_width = window_width
+            elements = self.formatter.format_message(message, start_line)
+            for element in elements:
+                if element.lines:
+                    self._update_buffer(element.lines, start_line, start_line)
+                if element.marks:
+                    for mark in element.marks:
+                        self._set_extmark(
+                            mark.start_line,
+                            mark.end_line,
+                            mark.mark_type,
+                            mark.mark_role,
+                            mark.sign_text,
+                        )
+                start_line += len(element.lines)
 
         self._move_chat_cursor()
 
+    def _handle_formatted_content(self, content) -> None:
+        """Handle formatted content from a tool call or result."""
+        current_line = len(self.chat_buf)
+
+        elements = self.formatter.format_content(content, current_line)
+        for element in elements:
+            if element.lines:
+                # Update buffer with the element's lines
+                self._update_buffer(element.lines, current_line, current_line)
+
+            if element.marks:
+                for mark in element.marks:
+                    self._set_extmark(
+                        mark.start_line,
+                        mark.end_line,
+                        mark.mark_type,
+                        mark.mark_role,
+                        mark.sign_text,
+                    )
+
+        self._move_chat_cursor()
+
+    def _handle_tool_batch_event(self, tool_batch: list[ToolContent]) -> None:
+        """Handle a batched tool call and results event."""
+        start_line = len(self.chat_buf)
+
+        for tool in tool_batch:
+            elements = self.formatter.format_content(tool, start_line)
+            for element in elements:
+                current_line = start_line
+                if element.lines:
+                    # Update buffer with the element's lines
+                    self._update_buffer(element.lines, current_line, current_line)
+
+                if element.marks:
+                    for mark in element.marks:
+                        self._set_extmark(
+                            mark.start_line,
+                            mark.end_line,
+                            mark.mark_type,
+                            mark.mark_role,
+                            mark.sign_text,
+                        )
+
+                start_line += len(element.lines)
+
     def _handle_stream_start(self) -> None:
         """Handle the start of a streaming message."""
+        self.nvim.command("RenderMarkdown disable")
+        current_line_count = len(self.chat_buf)
+        elements = self.formatter.format_message(
+            Message(role="assistant", content=[TextContent(text="")]), current_line_count
+        )
+        header_element = elements[0]
+        if header_element.lines:
+            self._update_buffer(header_element.lines, current_line_count, current_line_count)
+        if header_element.marks:
+            for mark in header_element.marks:
+                self._set_extmark(
+                    mark.start_line,
+                    mark.end_line,
+                    mark.mark_type,
+                    mark.mark_role,
+                    mark.sign_text,
+                )
         current_line_count = len(self.chat_buf)
         self.stream_start_line = current_line_count
         self.stream_end_line = current_line_count
-        self.stream_text = ""
-        self.nvim.command('RenderMarkdown disable')
+
+    def _handle_stream_event(self, text: str) -> None:
+        """Handle a streaming message event."""
+        if not text or not self.is_valid:
+            return
+        logger.debug(f"stream event: {text}")
+
+        try:
+            # Update stream content and format using the formatter
+            self.stream_text += text
+            self.stream_start_line = 0 if self.stream_start_line is None else self.stream_start_line
+            elements = self.formatter.format_stream_content(self.stream_text, self.stream_start_line)
+
+            # Update buffer content
+            if self.stream_start_line is not None and elements:
+                # For now we expect only one element for streaming
+                element = elements[0]
+                self._update_buffer(element.lines, self.stream_start_line, self.stream_end_line)
+                self.stream_end_line = self.stream_start_line + len(element.lines)
+                self._move_chat_cursor()
+        except Exception:
+            logger.exception("Error in stream content handler")
 
     def _handle_stream_stop(self) -> None:
         """Handle the end of a streaming message."""
         # Re-enable markdown rendering first
-        self.nvim.command('RenderMarkdown enable')
+        self.nvim.command("RenderMarkdown enable")
 
         # Reset streaming state
         self.stream_start_line = None
@@ -247,48 +351,6 @@ class ChatView:
 
         # Update cursor
         self._move_chat_cursor()
-
-    def _handle_stream_event(self, text: str) -> None:
-        """Handle a streaming message event."""
-        if not text or not self.is_valid:
-            return
-        logger.debug(f"strem event: {text}")
-
-        try:
-            # Update stream content and format using the formatter
-            self.stream_text += text
-            window_width = self.nvim.api.win_get_width(self.chat_win)
-            new_lines = self.formatter.format_stream_content(self.stream_text, window_width)
-
-            # Update buffer content
-            if self.stream_start_line is not None:
-                # Update the entire streaming message content
-                self._update_buffer(new_lines, self.stream_start_line, self.stream_end_line)
-                self.stream_end_line = self.stream_start_line + len(new_lines)
-                self._move_chat_cursor()
-        except Exception:
-            logger.exception("Error in stream content handler")
-
-
-    def _handle_tool_call_event(self, tool_call) -> None:
-        """Handle a tool call event."""
-        if self.stream_start_line is None:
-            self._handle_stream_start()
-
-        lines = self.formatter.format_content(tool_call)
-        self._handle_lines(lines)
-
-    def _handle_tool_result_event(self, tool_result) -> None:
-        """Handle a tool result event."""
-        lines = self.formatter.format_content(tool_result)
-        self._handle_lines(lines)
-
-    def _handle_tool_batch_event(self, tool_batch) -> None:
-        """Handle a batched tool call and results event."""
-        for tool in tool_batch:
-            lines = self.formatter.format_content(tool)
-            self._handle_lines(lines)
-
 
     def _handle_lines(self, lines: list[str]):
         current_line_count = len(self.chat_buf)
@@ -299,6 +361,21 @@ class ChatView:
         """Update the cursor position"""
         self.chat_win.cursor = pos or (len(self.chat_buf), 0)
 
+    def _set_extmark(self, start_line: int, end_line: int, mark_type: str, mark_role: str, sign_text: str) -> int:
+        """Create an extmark with consistent formatting."""
+        sign_hl_group = f"{mark_type.title()}{mark_role.title()}"
+        options = {"end_line": end_line, "sign_text": sign_text, "sign_hl_group": sign_hl_group, "priority": 100}
+
+        mark_id = self.nvim.api.buf_set_extmark(self.chat_buf, self.mark_namespace, start_line, 0, options)
+
+        self.message_marks[mark_id] = {
+            "type": mark_type,
+            "role": mark_role,
+            "start": start_line,
+            "end": start_line - 1,
+            "options": options,
+        }
+        return mark_id
 
     def _handle_event(self, event: UIEvent) -> None:
         """Handle incoming UI events."""
@@ -309,8 +386,8 @@ class ChatView:
                 UIEventType.MESSAGE_STREAM_START: self._handle_stream_start,
                 UIEventType.MESSAGE_STREAM_EVENT: lambda: self._handle_stream_event(event.text),
                 UIEventType.MESSAGE_STREAM_STOP: self._handle_stream_stop,
-                UIEventType.TOOL_CALL: lambda: self._handle_tool_call_event(event.tool_call),
-                UIEventType.TOOL_RESULT: lambda: self._handle_tool_result_event(event.tool_result),
+                UIEventType.TOOL_CALL: lambda: self._handle_formatted_content(event.tool_call),
+                UIEventType.TOOL_RESULT: lambda: self._handle_formatted_content(event.tool_result),
                 UIEventType.TOOL_BATCH: lambda: self._handle_tool_batch_event(event.tool_batch),
                 UIEventType.CLEAR_INPUT: self.clear_input,
                 UIEventType.CLOSE: self.close,
@@ -326,6 +403,50 @@ class ChatView:
 
         except Exception:
             logger.exception("Error handling event")
+
+    def navigate_to_mark(self, mark_id: int) -> None:
+        """Navigate to a specific extmark"""
+        if mark_id in self.message_marks:
+            mark = self.message_marks[mark_id]
+            self.nvim.current.window = self.chat_win
+            self.nvim.current.window.cursor = (mark["start"] + 1, 0)
+
+    def _find_marks_by_type(self, mark_type: str) -> List[Tuple[int, Dict]]:
+        """Find all marks of a specific type"""
+        return [(id, mark) for id, mark in self.message_marks.items() if mark["type"] == mark_type]
+
+    def _find_nearest_mark(self, line: int, marks: List[Tuple[int, Dict]], forward: bool = True) -> int | None:
+        """Find the nearest mark to the current line"""
+        if not marks:
+            return None
+
+        current_marks = sorted(marks, key=lambda x: x[1]["start"])
+        if forward:
+            for mark_id, mark in current_marks:
+                if mark["start"] > line:
+                    return mark_id
+            return current_marks[0][0]  # Wrap around to first
+        else:
+            for mark_id, mark in reversed(current_marks):
+                if mark["start"] < line:
+                    return mark_id
+            return current_marks[-1][0]  # Wrap around to last
+
+    def navigate_messages(self, forward: bool = True) -> None:
+        """Navigate between messages"""
+        current_line = self.nvim.current.window.cursor[0] - 1
+        message_marks = self._find_marks_by_type("message")
+        mark_id = self._find_nearest_mark(current_line, message_marks, forward)
+        if mark_id is not None:
+            self.navigate_to_mark(mark_id)
+
+    def navigate_tools(self, forward: bool = True) -> None:
+        """Navigate between tool calls/results"""
+        current_line = self.nvim.current.window.cursor[0] - 1
+        tool_marks = self._find_marks_by_type("tool")
+        mark_id = self._find_nearest_mark(current_line, tool_marks, forward)
+        if mark_id is not None:
+            self.navigate_to_mark(mark_id)
 
     def cleanup(self):
         """Cleanup resources when the plugin is unloaded"""

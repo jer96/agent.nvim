@@ -101,7 +101,7 @@ class ChatInterface:
         return False
 
     async def _attach_user_message_with_context(self, user_message: str | None, context: FileContext):
-        if last_message_contains_tool_use(self.context.messages):
+        if last_message_contains_tool_use(self.context.get_messages(limit=1)):
             return
 
         messages = []

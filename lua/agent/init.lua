@@ -1,6 +1,7 @@
 local M = {}
 
 local utils = require("agent.utils")
+local highlights = require("agent.ui.highlights")
 
 M.config = {}
 
@@ -16,6 +17,9 @@ function M.setup(opts)
     utils.log("Error: Python 3 support required", vim.log.levels.ERROR)
     return
   end
+
+  -- Setup highlights
+  highlights.setup()
 end
 
 return M
