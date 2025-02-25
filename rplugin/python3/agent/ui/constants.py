@@ -1,0 +1,4 @@
+TOOL_ICON = ""
+MESSAGE_ICON = "󰍪"
+SUCCESS_ICON = ""
+FAIL_ICON = ""
