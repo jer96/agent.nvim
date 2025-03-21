@@ -18,31 +18,6 @@ class AgentPlugin:
         self.chat_interface = ChatInterface(nvim, self.context)
         setup_logger()
 
-    @pynvim.function("AgentNextMark")
-    def next_mark(self, args: List[str]):
-        self.chat_interface.view.navigate_marks(forward=True)
-
-    @pynvim.function("AgentPrevMark")
-    def prev_mark(self, args: List[str]):
-        self.chat_interface.view.navigate_marks(forward=False)
-        
-    # Keep these for backward compatibility
-    @pynvim.function("AgentNextMessage")
-    def next_message(self, args: List[str]):
-        self.chat_interface.view.navigate_marks(forward=True)
-
-    @pynvim.function("AgentPrevMessage")
-    def prev_message(self, args: List[str]):
-        self.chat_interface.view.navigate_marks(forward=False)
-
-    @pynvim.function("AgentNextTool")
-    def next_tool(self, args: List[str]):
-        self.chat_interface.view.navigate_marks(forward=True)
-
-    @pynvim.function("AgentPrevTool")
-    def prev_tool(self, args: List[str]):
-        self.chat_interface.view.navigate_marks(forward=False)
-
     @pynvim.command("AgentToggle", sync=True)
     def toggle_chat(self):
         if self.chat_interface.is_active:
@@ -69,10 +44,6 @@ class AgentPlugin:
     @pynvim.function("AgentStartConversation", sync=True)
     def start_conversation(self, args: List[str]):
         self.chat_interface.start_conversation()
-
-    @pynvim.function("AgentContextGetData", sync=True)
-    def get_context_data(self, args: List[str]) -> Dict:
-        return self.context.get_context_data()
 
     @pynvim.function("AgentContextAddFile", sync=True)
     def add_file(self, args: List[str]):
@@ -135,11 +106,6 @@ class AgentPlugin:
                 self.nvim.err_write(f"Conversation {conv_id} not found\n")
         except Exception as e:
             self.nvim.err_write(f"Error loading conversation: {str(e)}\n")
-
-    @pynvim.autocmd("WinResized", pattern="*", eval='expand("<afile>")')
-    def win_close_auto_cmd(self, filename):
-        if self.chat_interface.is_active:
-            self.chat_interface.view.resize_windows()
 
     @pynvim.function("AgentHandleBufDelete")
     def handle_buf_delete(self, args: List[str]) -> None:

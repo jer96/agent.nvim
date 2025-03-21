@@ -53,7 +53,9 @@ class AgentContext:
         filetype = buf.options.get("filetype", "unknown")
         is_ignored_file_type = filetype in IGNORED_BUF_FILE_TYPES
         is_ignored_pattern = any([pattern in buf.name for pattern in IGNORED_BUF_PATTERNS])
-        return is_ignored_file_type or is_ignored_pattern
+        # Check if it's a hidden file (filename starts with a dot)
+        is_hidden_file = os.path.basename(buf.name).startswith('.')
+        return is_ignored_file_type or is_ignored_pattern or is_hidden_file
 
     def get_context_data(self) -> Dict:
         """Get current context data in a format suitable for the previewer"""
