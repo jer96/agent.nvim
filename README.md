@@ -4,6 +4,9 @@ An LLM agent for Neovim that integrates AI assistance directly into your editing
 
 > NOTE: this plugin is experimental and subject to frequent breaking changes.
 
+## Demo 
+https://github.com/user-attachments/assets/8dc00c01-4e4a-4007-a7fe-7dbf7633f755
+
 ## Features
 
 - Support for streaming respones using either Anthropic or Bedrock API
